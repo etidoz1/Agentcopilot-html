@@ -133,9 +133,36 @@
         </main>
     </div>
 
-    <!-- Initialize Icons -->
-    <script>
-        lucide.createIcons();
-    </script>
+    <!-- Initialize Icons and Interactivity -->
+<script>
+    // 1. Load the icons
+    lucide.createIcons();
+
+    // 2. Add interactivity to the sidebar
+    const navItems = document.querySelectorAll('.nav-item');
+    
+    navItems.forEach(item => {
+        item.addEventListener('click', function(e) {
+            e.preventDefault(); // Stop the page from refreshing
+            
+            // Remove 'active' class from all items
+            navItems.forEach(nav => nav.classList.remove('active'));
+            
+            // Add 'active' class to the clicked item
+            this.classList.add('active');
+        });
+    });
+
+    // 3. Add interactivity to the mobile menu toggle
+    const menuToggle = document.querySelector('.menu-toggle');
+    const sidebar = document.querySelector('.sidebar');
+
+    if (menuToggle) {
+        menuToggle.addEventListener('click', () => {
+            // Toggle a class to show/hide the sidebar on mobile
+            sidebar.classList.toggle('show-mobile');
+        });
+    }
+</script>
 </body>
 </html>
