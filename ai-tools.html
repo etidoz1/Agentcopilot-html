@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Tools - AgentCopilot</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo-container">
+                <div class="logo-icon"><i data-lucide="home"></i></div>
+                <span class="logo-text">AgentCopilot</span>
+            </div>
+            <nav class="nav-menu">
+                <a href="./index.html" class="nav-item"><i data-lucide="layout-dashboard"></i> Dashboard</a>
+                <a href="./leads.html" class="nav-item"><i data-lucide="users"></i> CRM Leads</a>
+                <a href="./ai-tools.html" class="nav-item active"><i data-lucide="sparkles"></i> AI Tools</a>
+                <a href="./admin.html" class="nav-item"><i data-lucide="shield-check"></i> Admin Panel</a>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-navbar">
+                <div class="menu-toggle"><i data-lucide="menu"></i></div>
+                <div class="user-profile">
+                    <i data-lucide="bell" class="notification-icon"></i>
+                    <div class="avatar">JE</div>
+                </div>
+            </header>
+
+            <div class="dashboard-content">
+                <div class="welcome-section">
+                    <p class="date">AI WORKSPACE</p>
+                    <h1>AI Tools</h1>
+                    <p class="subtitle">Generate listings and draft emails instantly.</p>
+                </div>
+
+                <div class="table-container">
+                    <h2>Listing Writer</h2>
+                    <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
+                        <input type="text" placeholder="Property Address" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
+                        <input type="text" placeholder="Beds, Baths, Square Footage" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
+                        <textarea placeholder="Key Features (e.g., pool, ocean view, newly renovated)" rows="4" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;"></textarea>
+                        <button style="padding: 12px; border-radius: 8px; background: var(--accent); color: black; font-weight: 600; border: none; cursor: pointer;">Generate Listing</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script>lucide.createIcons();</script>
+</body>
+</html>
