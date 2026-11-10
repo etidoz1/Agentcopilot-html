@@ -1,6 +1,6 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
-
+console.log("AGENTCOPILOT SCRIPT IS RUNNING");
 const firebaseConfig = {
     apiKey: "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",
     authDomain: "agentcopilot-98817.firebaseapp.com",
