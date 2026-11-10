@@ -12,10 +12,14 @@
     <div class="app-container">
         <!-- Sidebar -->
         <aside class="sidebar">
-            <div class="logo-container">
-                <div class="logo-icon"><i data-lucide="home"></i></div>
-                <span class="logo-text">AgentCopilot</span>
+            <div class="logo-container" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                <div class="logo-left">
+                    <div class="logo-icon"><i data-lucide="home"></i></div>
+                    <span class="logo-text">AgentCopilot</span>
+                </div>
+                <i data-lucide="x" class="close-menu"></i>
             </div>
+            
             <nav class="nav-menu">
                 <a href="./index.html" class="nav-item">
                     <i data-lucide="layout-dashboard"></i> Dashboard
@@ -23,10 +27,10 @@
                 <a href="./leads.html" class="nav-item active">
                     <i data-lucide="users"></i> CRM Leads
                 </a>
-                <a href="#" class="nav-item">
+                <a href="./ai-tools.html" class="nav-item">
                     <i data-lucide="sparkles"></i> AI Tools
                 </a>
-                <a href="#" class="nav-item">
+                <a href="./admin.html" class="nav-item">
                     <i data-lucide="shield-check"></i> Admin Panel
                 </a>
             </nav>
@@ -49,7 +53,6 @@
                     <p class="subtitle">Drag leads across stages as they move from first contact to signed closing.</p>
                 </div>
 
-                <!-- Kanban Board Container -->
                 <div class="kanban-board">
                     <!-- Column 1 -->
                     <div class="kanban-column">
@@ -57,55 +60,38 @@
                             <span class="col-title"><span class="dot dot-blue"></span> New</span>
                             <span class="col-count">2</span>
                         </div>
-                        <div class="kanban-cards">
-                            <div class="kanban-card">
-                                <div class="card-header">
-                                    <div class="avatar-small">AH</div>
-                                    <div class="card-title">
-                                        <h4>Amelia Hartwell</h4>
-                                        <p>amelia.hartwell@mail.com</p>
-                                    </div>
-                                </div>
-                                <div class="card-footer">
-                                    <span class="card-price">$1.2M</span>
-                                    <span class="card-date">Nov 07, 2026</span>
+                        <div class="kanban-card">
+                            <div class="card-header">
+                                <div class="avatar-small">AH</div>
+                                <div class="card-title">
+                                    <h4>Amelia Hartwell</h4>
+                                    <p>amelia.hartwell@mail.com</p>
                                 </div>
                             </div>
-                            <div class="kanban-card">
-                                <div class="card-header">
-                                    <div class="avatar-small">MC</div>
-                                    <div class="card-title">
-                                        <h4>Marcus Chen</h4>
-                                        <p>mchen@northgate.io</p>
-                                    </div>
-                                </div>
-                                <div class="card-footer">
-                                    <span class="card-price">$860K</span>
-                                    <span class="card-date">Nov 07, 2026</span>
-                                </div>
+                            <div class="card-footer">
+                                <span class="card-price">$1.2M</span>
+                                <span class="card-date">Nov 07, 2026</span>
                             </div>
                         </div>
                     </div>
-
+                    
                     <!-- Column 2 -->
                     <div class="kanban-column">
                         <div class="kanban-header">
                             <span class="col-title"><span class="dot dot-yellow"></span> Contacted</span>
                             <span class="col-count">1</span>
                         </div>
-                        <div class="kanban-cards">
-                            <div class="kanban-card">
-                                <div class="card-header">
-                                    <div class="avatar-small">SR</div>
-                                    <div class="card-title">
-                                        <h4>Sarah Reid</h4>
-                                        <p>sarah@example.com</p>
-                                    </div>
+                        <div class="kanban-card">
+                            <div class="card-header">
+                                <div class="avatar-small">MC</div>
+                                <div class="card-title">
+                                    <h4>Marcus Chen</h4>
+                                    <p>mchen@northgate.io</p>
                                 </div>
-                                <div class="card-footer">
-                                    <span class="card-price">$1.5M</span>
-                                    <span class="card-date">Nov 06, 2026</span>
-                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <span class="card-price">$860K</span>
+                                <span class="card-date">Nov 07, 2026</span>
                             </div>
                         </div>
                     </div>
@@ -114,10 +100,20 @@
                     <div class="kanban-column">
                         <div class="kanban-header">
                             <span class="col-title"><span class="dot dot-green"></span> Viewing</span>
-                            <span class="col-count">0</span>
+                            <span class="col-count">1</span>
                         </div>
-                        <div class="kanban-cards">
-                            <div class="empty-state">No leads here yet.</div>
+                        <div class="kanban-card">
+                            <div class="card-header">
+                                <div class="avatar-small">SJ</div>
+                                <div class="card-title">
+                                    <h4>Sarah Jenkins</h4>
+                                    <p>sarah.j@example.com</p>
+                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <span class="card-price">$2.1M</span>
+                                <span class="card-date">Nov 06, 2026</span>
+                            </div>
                         </div>
                     </div>
 
@@ -127,19 +123,17 @@
                             <span class="col-title"><span class="dot dot-gray"></span> Closed</span>
                             <span class="col-count">1</span>
                         </div>
-                        <div class="kanban-cards">
-                            <div class="kanban-card">
-                                <div class="card-header">
-                                    <div class="avatar-small">JD</div>
-                                    <div class="card-title">
-                                        <h4>James Doe</h4>
-                                        <p>james.doe@mail.com</p>
-                                    </div>
+                        <div class="kanban-card">
+                            <div class="card-header">
+                                <div class="avatar-small">JD</div>
+                                <div class="card-title">
+                                    <h4>James Doe</h4>
+                                    <p>james.doe@mail.com</p>
                                 </div>
-                                <div class="card-footer">
-                                    <span class="card-price">$950K</span>
-                                    <span class="card-date">Nov 01, 2026</span>
-                                </div>
+                            </div>
+                            <div class="card-footer">
+                                <span class="card-price">$950K</span>
+                                <span class="card-date">Nov 01, 2026</span>
                             </div>
                         </div>
                     </div>
@@ -148,12 +142,8 @@
         </main>
     </div>
 
-    <script>
-        lucide.createIcons();
-    </script>
-    <!-- Keep this to load icons -->
+    <!-- Load Icons & Script -->
     <script>lucide.createIcons();</script>
-    <!-- Add this to make the menu work -->
-    <script src="./script.js"></script>
+    <script src="./script.js" type="module"></script>
 </body>
 </html>
