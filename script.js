@@ -16,7 +16,7 @@ const auth = getAuth(app);
 document.addEventListener('DOMContentLoaded', () => {
     if (typeof lucide !== 'undefined') lucide.createIcons();
 
-    // FORCE LOGIN: If not logged in, kick them to login.html
+    // 1. Force Login Redirect
     onAuthStateChanged(auth, (user) => {
         const isLoginPage = window.location.pathname.includes('login.html');
         if (!user && !isLoginPage) {
@@ -24,20 +24,19 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // MENU TOGGLE LOGIC
+    // 2. Mobile Menu Logic (Stronger version)
     const menuToggle = document.querySelector('.menu-toggle');
     const closeMenuBtn = document.querySelector('.close-menu');
     const sidebar = document.querySelector('.sidebar');
 
     if (menuToggle && sidebar) {
-        menuToggle.addEventListener('click', (e) => {
-            e.preventDefault();
+        menuToggle.addEventListener('click', () => {
             sidebar.classList.add('show-mobile');
         });
     }
+
     if (closeMenuBtn && sidebar) {
-        closeMenuBtn.addEventListener('click', (e) => {
-            e.preventDefault();
+        closeMenuBtn.addEventListener('click', () => {
             sidebar.classList.remove('show-mobile');
         });
     }
