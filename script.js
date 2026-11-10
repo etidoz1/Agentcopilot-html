@@ -1,6 +1,9 @@
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+
 console.log("AGENTCOPILOT SCRIPT IS RUNNING");
+
 const firebaseConfig = {
     apiKey: "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",
     authDomain: "agentcopilot-98817.firebaseapp.com",
@@ -15,20 +18,37 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 document.addEventListener('DOMContentLoaded', () => {
+
     // 1. Load Icons
     if (typeof lucide !== 'undefined') {
         lucide.createIcons();
     }
 
-    // 2. Force Login Redirect (If not on the login page and not logged in)
+    // 2. Protect Dashboard
     onAuthStateChanged(auth, (user) => {
         const isLoginPage = window.location.pathname.includes('login.html');
+
         if (!user && !isLoginPage) {
             window.location.replace("./login.html");
         }
     });
 
-    // 3. Mobile Menu Toggle Logic
+    // 3. Logout Button
+    const logoutBtn = document.getElementById('logout-btn');
+
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await signOut(auth);
+                window.location.replace("./login.html");
+            } catch (error) {
+                console.error("Logout error:", error);
+                alert("Logout failed. Please try again.");
+            }
+        });
+    }
+
+    // 4. Mobile Menu Toggle
     const menuToggle = document.querySelector('.menu-toggle');
     const closeMenuBtn = document.querySelector('.close-menu');
     const sidebar = document.querySelector('.sidebar');
@@ -44,4 +64,5 @@ document.addEventListener('DOMContentLoaded', () => {
             sidebar.classList.remove('show-mobile');
         });
     }
+
 });
