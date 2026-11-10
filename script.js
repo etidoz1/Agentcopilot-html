@@ -10,13 +10,17 @@ const firebaseConfig = {
     appId: "1:1061657518684:web:5db7baa214b1d2da08fc99"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
 document.addEventListener('DOMContentLoaded', () => {
-    if (typeof lucide !== 'undefined') lucide.createIcons();
+    // 1. Load Icons
+    if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+    }
 
-    // 1. Force Login Redirect
+    // 2. Force Login Redirect (If not on the login page and not logged in)
     onAuthStateChanged(auth, (user) => {
         const isLoginPage = window.location.pathname.includes('login.html');
         if (!user && !isLoginPage) {
@@ -24,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 2. Mobile Menu Logic (Stronger version)
+    // 3. Mobile Menu Toggle Logic
     const menuToggle = document.querySelector('.menu-toggle');
     const closeMenuBtn = document.querySelector('.close-menu');
     const sidebar = document.querySelector('.sidebar');
