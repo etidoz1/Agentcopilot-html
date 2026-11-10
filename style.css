@@ -26,7 +26,7 @@ body {
     background-image: radial-gradient(circle at 10% 10%, rgba(16, 185, 129, 0.05) 0%, transparent 40%);
 }
 
-.app-container { display: flex; height: 100vh; }
+.app-container { display: flex; height: 100vh; width: 100%; }
 
 /* Sidebar */
 .sidebar {
@@ -36,9 +36,8 @@ body {
     display: flex;
     flex-direction: column;
     padding: 24px 16px;
-    display: none; 
+    transition: left 0.3s ease-in-out;
 }
-@media (min-width: 768px) { .sidebar { display: flex; } }
 
 .logo-container { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; padding: 0 8px; }
 .logo-icon { background-color: var(--accent); color: #000; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; }
@@ -50,11 +49,10 @@ body {
 .nav-item.active { background-color: var(--accent-glow); color: var(--accent); }
 
 /* Main Content */
-.main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+.main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; width: 100%; }
 
 .top-navbar { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--border-color); background-color: rgba(9, 9, 11, 0.8); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 10; }
 .menu-toggle { display: block; color: var(--text-muted); cursor: pointer; }
-@media (min-width: 768px) { .menu-toggle { display: none; } }
 
 .user-profile { display: flex; align-items: center; gap: 16px; }
 .notification-icon { color: var(--text-muted); width: 20px; height: 20px; }
@@ -118,23 +116,32 @@ tr:last-child td { border-bottom: none; }
 .card-date { color: var(--text-muted); }
 .empty-state { text-align: center; color: var(--text-muted); font-size: 0.85rem; padding: 20px 0; font-style: italic; }
 
-/* FORCE MOBILE MENU TO SHOW */
-/* BULLETPROOF MOBILE MENU */
-@media (max-width: 767px) {
+/* --- MOBILE RESPONSIVENESS FIX --- */
+@media (max-width: 768px) {
+    /* Hide sidebar by default on mobile */
     .sidebar {
-        display: flex !important;
         position: fixed;
         top: 0;
-        left: -100%;
+        left: -100%; /* Hidden off-screen */
         width: 260px;
         height: 100vh;
-        z-index: 999;
-        transition: left 0.3s ease-in-out;
-        box-shadow: 5px 0 15px rgba(0,0,0,0.5);
-        background-color: #000;
+        z-index: 9999;
+        background-color: var(--bg-sidebar);
+        display: flex; 
     }
 
+    /* When the 'show-mobile' class is added, slide it in */
     .sidebar.show-mobile {
-        left: 0; 
+        left: 0;
+    }
+
+    /* Make sure the menu button is visible on mobile */
+    .menu-toggle {
+        display: block !important; 
+    }
+
+    .main-content {
+        margin-left: 0;
+        width: 100%;
     }
 }
