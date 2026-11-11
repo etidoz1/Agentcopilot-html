@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - AgentCopilot</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="./style.css">
+    <style>
+        .login-container { display: flex; justify-content: center; align-items: center; height: 100vh; width: 100%; }
+        .login-box { background-color: var(--bg-card); border: 1px solid var(--border-color); padding: 40px; border-radius: 12px; width: 100%; max-width: 400px; text-align: center; }
+        .login-box h2 { margin-bottom: 8px; }
+        .login-box p { color: var(--text-muted); margin-bottom: 24px; font-size: 0.9rem; }
+        .login-box input { width: 100%; padding: 12px; margin-bottom: 16px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white; }
+        .login-box button { width: 100%; padding: 12px; border-radius: 8px; background: var(--accent); color: black; font-weight: 600; cursor: pointer; border: none; transition: opacity 0.2s; }
+        .login-box button:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h2>AgentCopilot</h2>
+            <p>Create your workspace</p>
+            <form id="register-form">
+                <input type="text" id="name" placeholder="Full Name" required>
+                <input type="email" id="email" placeholder="Email address" required>
+                <input type="password" id="password" placeholder="Password (min 6 chars)" required>
+                <button type="submit" id="register-btn">Create Account</button>
+            </form>
+            <p id="error-msg" style="color: #F43F5E; margin-top: 16px; display: none;"></p>
+            <!-- LINK TO LOGIN -->
+            <p style="margin-top: 24px; font-size: 0.8rem;">
+                Already have an account? <a href="./login.html" style="color: var(--accent);">Sign in</a>
+            </p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",
+            authDomain: "agentcopilot-98817.firebaseapp.com",
+            projectId: "agentcopilot-98817",
+            storageBucket: "agentcopilot-98817.firebasestorage.app",
+            messagingSenderId: "1061657518684",
+            appId: "1:1061657518684:web:5db7baa214b1d2da08fc99"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('name').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const btn = document.getElementById('register-btn');
+            const errorMsg = document.getElementById('error-msg');
+
+            btn.innerText = "Creating...";
+            errorMsg.style.display = "none";
+
+            try {
+                // 1. Create user in Authentication
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // 2. Save user data to Firestore Database (matching your screenshot!)
+                await setDoc(doc(db, "users", user.uid), {
+                    name: name,
+                    email: email,
+                    role: "agent",
+                    createdAt: new Date().toISOString()
+                });
+
+                // 3. Redirect to dashboard
+                window.location.href = "./index.html";
+            } catch (error) {
+                btn.innerText = "Create Account";
+                errorMsg.innerText = error.message;
+                errorMsg.style.display = "block";
+            }
+        });
+    </script>
+</body>
+</html>
