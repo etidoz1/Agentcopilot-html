@@ -42,10 +42,13 @@
                 <div class="table-container">
                     <h2>Listing Writer</h2>
                     <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
-                        <input type="text" placeholder="Property Address" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
-                        <input type="text" placeholder="Beds, Baths, Square Footage" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
-                        <textarea placeholder="Key Features (e.g., pool, ocean view, newly renovated)" rows="4" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;"></textarea>
-                        <button style="padding: 12px; border-radius: 8px; background: var(--accent); color: black; font-weight: 600; border: none; cursor: pointer;">Generate Listing</button>
+
+<input type="text" id="address" placeholder="Property Address" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
+<input type="text" id="details" placeholder="Beds, Baths, Square Footage" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;">
+<textarea id="features" placeholder="Key Features (e.g., pool, ocean view, newly renovated)" rows="4" style="padding: 12px; border-radius: 8px; background: #09090B; border: 1px solid #27272A; color: white;"></textarea>
+<button id="generate-btn" style="padding: 12px; border-radius: 8px; background: var(--accent); color: black; font-weight: 600; border: none; cursor: pointer;">Generate Listing</button>
+<div id="ai-output" style="display: none; margin-top: 16px; padding: 16px; border-radius: 8px; background: #09090B; border: 1px solid var(--accent); color: #FAFAFA; font-size: 0.9rem; line-height: 1.5;"></div>
+                        
                     </div>
                 </div>
             </div>
