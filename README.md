@@ -18,7 +18,7 @@ Project: agentcopilot-98817.
 Do not make users publicly readable. Firestore rules, not hidden navigation, are the security boundary. Test with Firebase Emulator before production.
 
 ## API setup
-Install Node.js 18+, run npm install, copy .env.example to .env, set FIREBASE_API_KEY and GEMINI_API_KEY, then run npm start. Keep .env out of Git. Set CLIENT_ORIGIN to the exact frontend origin. GitHub Pages hosts static files only; deploy server.js separately to a Node host and set window.AGENTCOPILOT_API_URL to that API origin before loading app.js.
+Install Node.js 18+, run npm install, copy .env.example to .env, set FIREBASE_API_KEY, FIREBASE_PROJECT_ID and GEMINI_API_KEY, then run npm start. Keep .env out of Git. Set CLIENT_ORIGIN to the exact frontend origin. GitHub Pages hosts static files only; deploy server.js separately to a Node host and set window.AGENTCOPILOT_API_URL to that API origin before loading app.js.
 
 ## Verification
 Run npm test and node --check server.js. These are smoke checks only, not full Firebase Emulator or end-to-end browser tests.
