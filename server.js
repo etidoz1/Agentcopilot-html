@@ -1,37 +1,12 @@
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const app = express();
-app.use(cors({
-            origin: '*' 
-            }));
-}2)
-app.use(express.json());
-
-// Initialize Gemini
-const genAI = ney GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-app.post('/api/generate', async (req, res) => {
-    try {
-            const { prompt } = req.body;
-                    
-                            // Use the standard Gemini Pro model
-                                    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-                                            
-                                                    const result = await model.generateContent(prompt);
-                                                            const response = await result.response;
-                                                                    const text = response.text();
-                                                                            
-                                                                                    res.json({ result: text });
-                                                                                        } catch (error) {
-                                                                                                console.error(error);
-                                                                                                        res.status(500).json({ error: "Failed to generate text" });
-                                                                                                            }
-                                                                                                            });
-
-                                                                                                            const PORT = 3000;
-                                                                                                            app.listen(PORT, () => {
-                                                                                                                console.log(`Server is running on port ${PORT}`);
-                                                                                                                });w
+const express=require('express'),cors=require('cors'),{GoogleGenerativeAI}=require('@google/generative-ai');
+const app=express(),PORT=Number(process.env.PORT||3000),origins=(process.env.CLIENT_ORIGIN||'https://etidoz1.github.io,http://localhost:5500').split(',').map(x=>x.trim()).filter(Boolean);
+app.use(cors({origin:(origin,cb)=>!origin||origins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))}));
+app.use(express.json({limit:'20kb'}));
+const hits=new Map();
+function limit(req,res,next){const k=req.ip||'unknown',now=Date.now(),b=hits.get(k)||{start:now,count:0};if(now-b.start>60000){b.start=now;b.count=0}b.count++;hits.set(k,b);if(b.count>12)return res.status(429).json({error:'Too many requests. Try again shortly.'});next()}
+async function auth(req,res,next){try{const token=(req.headers.authorization||'').replace(/^Bearer\s+/i,'');if(!token||!process.env.FIREBASE_API_KEY)return res.status(401).json({error:'Sign-in required.'});const r=await fetch('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='+process.env.FIREBASE_API_KEY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idToken:token})}),d=await r.json();if(!r.ok||!d.users?.[0])return res.status(401).json({error:'Session invalid. Sign in again.'});const uid=d.users[0].localId,project=process.env.FIREBASE_PROJECT_ID||'agentcopilot-98817';const pr=await fetch('https://firestore.googleapis.com/v1/projects/'+project+'/databases/(default)/documents/users/'+encodeURIComponent(uid),{headers:{Authorization:'Bearer '+token}});const profile=await pr.json();if(!pr.ok)return res.status(403).json({error:'Workspace profile unavailable.'});const fields=profile.fields||{},role=fields.role?.stringValue,status=fields.status?.stringValue||'active';if(!['owner','admin','agent'].includes(role)||status==='disabled')return res.status(403).json({error:'Workspace access is disabled.'});req.user=d.users[0];req.role=role;next()}catch(e){next(e)}}
+app.get('/health',(_,res)=>res.json({status:'ok',service:'AgentCopilot API'}));
+app.post('/api/generate',limit,auth,async(req,res,next)=>{try{const prompt=typeof req.body.prompt==='string'?req.body.prompt.trim():'';if(!prompt||prompt.length>5000)return res.status(400).json({error:'Prompt must contain 1–5000 characters.'});if(!process.env.GEMINI_API_KEY)return res.status(503).json({error:'AI provider is not configured. Set GEMINI_API_KEY on the server.'});const ai=new GoogleGenerativeAI(process.env.GEMINI_API_KEY),model=ai.getGenerativeModel({model:process.env.GEMINI_MODEL||'gemini-1.5-flash'}),result=await model.generateContent(prompt);res.json({result:result.response.text()})}catch(e){next(e)}});
+app.use((e,req,res,next)=>{console.error('API error:',e.message);res.status(500).json({error:'The request could not be completed.'})});
+app.listen(PORT,()=>console.log('AgentCopilot API listening on '+PORT));
