@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signedIn(){return request.auth != null;}
+  function profile(uid){return get(/databases/$(database)/documents/users/$(uid));}
+  function role(){return signedIn() && profile(request.auth.uid).exists() ? profile(request.auth.uid).data.role : 'none';}
+  function owner(){return signedIn() && role() == 'owner';}
+  function admin(){return signedIn() && role() == 'admin';}
+  function agent(){return signedIn() && role() == 'agent';}
+  match /users/{uid} {
+   allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == 'agent' && request.resource.data.email == request.auth.token.email;
+   allow read: if signedIn() && (request.auth.uid == uid || owner() || (admin() && resource.data.role == 'agent'));
+   allow update: if signedIn() && (
+    (request.auth.uid == uid && resource.data.role == 'agent' && request.resource.data.role == resource.data.role && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','phone','photoURL','updatedAt'])) ||
+    (admin() && resource.data.role == 'agent' && request.resource.data.role == 'agent' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])) ||
+    (owner() && resource.data.role != 'owner' && request.resource.data.role in ['agent','admin'] && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role','status','name','phone','updatedAt']))
+   );
+   allow delete: if owner() && resource.data.role != 'owner';
+  }
+  match /leads/{id} {
+   allow create: if (agent() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.createdByRole == 'agent') || (owner() && request.resource.data.ownerUid == request.auth.uid && request.resource.data.createdByRole == 'owner');
+   allow read: if signedIn() && (owner() || (agent() && resource.data.ownerUid == request.auth.uid) || (admin() && resource.data.createdByRole == 'agent'));
+   allow update: if signedIn() && (owner() ||
+    (agent() && resource.data.ownerUid == request.auth.uid && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.createdByRole == 'agent') ||
+    (admin() && resource.data.createdByRole == 'agent' && request.resource.data.ownerUid == resource.data.ownerUid && request.resource.data.createdByRole == 'agent'));
+   allow delete: if owner() || (admin() && resource.data.createdByRole == 'agent') || (agent() && resource.data.ownerUid == request.auth.uid);
+  }
+  match /{document=**} { allow read, write: if false; }
+ }
+}
