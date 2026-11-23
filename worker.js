@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "gemini-3.8-flash";
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 const ALLOWED_ORIGINS = ["https://etidoz1.github.io"];
 
 function json(data, status = 200, headers = {}) {
