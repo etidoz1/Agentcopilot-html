@@ -59,10 +59,6 @@
     // Set this to your deployed backend origin after deploying the Render service.
     window.AGENTCOPILOT_API_URL = window.AGENTCOPILOT_API_URL || 'https://YOUR-RENDER-SERVICE.onrender.com';
 
-    const menuToggle = document.querySelector('.menu-toggle');
-    const sidebar = document.querySelector('.sidebar');
-    menuToggle?.addEventListener('click', () => sidebar?.classList.toggle('show-mobile'));
-
     const form = document.getElementById('listing-form');
     const button = document.getElementById('generate-btn');
     const output = document.getElementById('ai-output');
@@ -99,5 +95,6 @@
       }
     });
   </script>
+  <script type="module" src="./script.js"></script>
 </body>
 </html>

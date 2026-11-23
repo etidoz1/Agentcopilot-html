@@ -38,7 +38,8 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+        import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",
@@ -51,8 +52,9 @@
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
+        const db = getFirestore(app);
 
-        document.getElementById('login-form').addEventListener('submit', (e) => {
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
@@ -62,13 +64,17 @@
             btn.innerText = "Signing in...";
             errorMsg.style.display = "none";
 
-            signInWithEmailAndPassword(auth, email, password)
-                .then(() => { window.location.href = "./index.html"; })
-                .catch((error) => {
-                    btn.innerText = "Sign In";
-                    errorMsg.innerText = error.message;
-                    errorMsg.style.display = "block";
-                });
+            try {
+                const credential = await signInWithEmailAndPassword(auth, email, password);
+                const profile = await getDoc(doc(db, "users", credential.user.uid));
+                const role = String(profile.exists() ? (profile.data().role || "owner") : "owner").toLowerCase();
+                window.location.replace(role === "admin" ? "./admin.html" : "./index.html");
+            } catch (error) {
+                if (auth.currentUser) await signOut(auth);
+                btn.innerText = "Sign In";
+                errorMsg.innerText = error.message || "Unable to sign in. Please try again.";
+                errorMsg.style.display = "block";
+            }
         });
     </script>
 </body>

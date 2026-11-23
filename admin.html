@@ -14,6 +14,7 @@
             <div class="logo-container">
                 <div class="logo-icon"><i data-lucide="home"></i></div>
                 <span class="logo-text">AgentCopilot</span>
+                <i data-lucide="x" class="close-menu" aria-label="Close menu"></i>
             </div>
             <nav class="nav-menu">
                 <a href="./index.html" class="nav-item"><i data-lucide="layout-dashboard"></i> Dashboard</a>
@@ -21,11 +22,12 @@
                 <a href="./ai-tools.html" class="nav-item"><i data-lucide="sparkles"></i> AI Tools</a>
                 <a href="./admin.html" class="nav-item active"><i data-lucide="shield-check"></i> Admin Panel</a>
             </nav>
+            <button id="logout-btn" class="logout-btn" type="button"><i data-lucide="log-out"></i><span>Logout</span></button>
         </aside>
 
         <main class="main-content">
             <header class="top-navbar">
-                <div class="menu-toggle"><i data-lucide="menu"></i></div>
+                <button class="menu-toggle" type="button" aria-label="Open menu"><i data-lucide="menu"></i></button>
                 <div class="user-profile">
                     <i data-lucide="bell" class="notification-icon"></i>
                     <div class="avatar">JE</div>
@@ -71,10 +73,6 @@
         </main>
     </div>
     <script>lucide.createIcons();</script>
-    <!-- Keep this to load icons -->
-    <script>lucide.createIcons();</script>
-    <!-- Add this to make the menu work -->
-        <!-- This MUST have type="module" -->
     <script src="./script.js" type="module"></script>
 </body>
 </html>
