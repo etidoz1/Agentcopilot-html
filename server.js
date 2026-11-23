@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express=require('express'),cors=require('cors'),{GoogleGenerativeAI}=require('@google/generative-ai');
-const app=express(),PORT=Number(process.env.PORT||3000),origins=(process.env.CLIENT_ORIGIN||'').split(',').map(x=>x.trim()).filter(Boolean);
-app.use(cors({origin:(origin,cb)=>!origin||!origins.length||origins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))}));
+const app=express(),PORT=Number(process.env.PORT||3000),origins=(process.env.CLIENT_ORIGIN||'https://etidoz1.github.io,http://localhost:5500').split(',').map(x=>x.trim()).filter(Boolean);
+app.use(cors({origin:(origin,cb)=>!origin||origins.includes(origin)?cb(null,true):cb(new Error('Origin not allowed'))}));
 app.use(express.json({limit:'20kb'}));
 const hits=new Map();
 function limit(req,res,next){const k=req.ip||'unknown',now=Date.now(),b=hits.get(k)||{start:now,count:0};if(now-b.start>60000){b.start=now;b.count=0}b.count++;hits.set(k,b);if(b.count>12)return res.status(429).json({error:'Too many requests. Try again shortly.'});next()}
