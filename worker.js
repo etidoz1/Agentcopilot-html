@@ -52,25 +52,23 @@ async function externalPropertySearch(env,query,criteria){
  const payload=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(response.status===401||response.status===403?"The global search key was rejected. Check the Tavily secret in Cloudflare.":"The global property search provider is temporarily unavailable.");
  const results=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string").slice(0,8).map(x=>{
-  const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);
-  const md=raw.match(/!\[[^\]]*\]\((https:\/\/[^)\s]+)(?:\s+[^)]*)?\)/i);
-  const og=raw.match(/(?:og:image|twitter:image)[\s:=]+["']?(https:\/\/[^\s"'<>]+)/i);
-  const pageImage=(md&&md[1])||(og&&og[1])||null;
-  const pageImages=Array.isArray(x.images)?x.images.map(im=>typeof im==="string"?im:im&&im.url).filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)).slice(0,6):[];
-  const images=[...new Set([...pageImages,...(pageImage?[pageImage]:[])])].slice(0,6);
-  let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
-  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:images,image_url:images[0]||null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
- });
- // Tavily search can omit page images. Extract only the first five image-less pages in one low-cost batch.
- const needs=results.filter(x=>!x.image_urls.length).slice(0,5);
- if(needs.length){
-  try{
-   const ex=await fetch("https://api.tavily.com/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,urls:needs.map(x=>x.url),extract_depth:"basic",include_images:true})});
-   if(ex.ok){const ep=await ex.json();const byUrl=new Map((Array.isArray(ep.results)?ep.results:[]).map(x=>[x.url,Array.isArray(x.images)?x.images.filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)).slice(0,6):[]]));
-    for(const item of needs){const found=byUrl.get(item.url)||[];if(found.length){item.image_urls=found;item.image_url=found[0];}}
-   }
-  }catch(err){console.warn("Tavily image extraction fallback failed",err);}
- }
+   const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);
+   let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
+   // Never use generic search-image results. Photos must come from this listing page itself.
+   return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
+  });
+  // Extract photos directly from each individual listing URL; leave the gallery empty if none are found.
+  const needs=results;
+  if(needs.length){
+   try{
+    const ex=await fetch("https://api.tavily.com/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,urls:needs.map(x=>x.url),extract_depth:"basic",include_images:true})});
+    if(ex.ok){
+     const ep=await ex.json();
+     const byUrl=new Map((Array.isArray(ep.results)?ep.results:[]).filter(x=>x&&typeof x.url==="string").map(x=>[x.url,Array.isArray(x.images)?[...new Set(x.images.map(im=>typeof im==="string"?im:im&&im.url).filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)))].slice(0,6):[]]));
+     for(const item of needs){const found=byUrl.get(item.url)||[];item.image_urls=found;item.image_url=found[0]||null;}
+    }
+   }catch(err){console.warn("Listing-page image extraction failed; leaving images empty",err);}
+  }
  // Only classify a price when the source gives one unambiguous amount in the requested currency.
  const max=Number(criteria.max_price),currency=String(criteria.currency||"").toUpperCase();
  const symbol=currency==="GBP"?"£":currency==="USD"?"\\$":currency==="EUR"?"€":currency==="NGN"?"₦":null;
