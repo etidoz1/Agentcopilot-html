@@ -6,7 +6,6 @@ workers_dev = true
 [vars]
 GEMINI_MODEL = "gemini-3.5-flash-lite"
 ALLOWED_ORIGIN = "https://etidoz1.github.io"
-FIREBASE_API_KEY = "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8"
 
 [[d1_databases]]
 binding = "DB"
