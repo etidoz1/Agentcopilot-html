@@ -48,7 +48,7 @@ async function externalPropertySearch(env,query,criteria){
  const location=[criteria.city,criteria.state,criteria.country].filter(Boolean).join(", ");
  const intent=criteria.purpose==="rent"?"property for rent rental listing":"property for sale real estate listing";
  const searchQuery=[query,intent,location,"actual property listing price photographs"].filter(Boolean).join(" ").slice(0,900);
- const response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,query:searchQuery,topic:"general",search_depth:"basic",max_results:8,include_answer:false,include_images:false,include_raw_content:true})});
+ const response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,query:searchQuery,topic:"general",search_depth:"basic",max_results:8,include_answer:false,include_images:true,include_image_descriptions:true,include_raw_content:true})});
  const payload=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(response.status===401||response.status===403?"The global search key was rejected. Check the Tavily secret in Cloudflare.":"The global property search provider is temporarily unavailable.");
  const results=Array.isArray(payload.results)?payload.results:[];
@@ -56,9 +56,11 @@ async function externalPropertySearch(env,query,criteria){
   const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);
   const md=raw.match(/!\[[^\]]*\]\((https:\/\/[^)\s]+)(?:\s+[^)]*)?\)/i);
   const og=raw.match(/(?:og:image|twitter:image)[\s:=]+["']?(https:\/\/[^\s"'<>]+)/i);
-  const image=(md&&md[1])||(og&&og[1])||null;
+  const pageImage=(md&&md[1])||(og&&og[1])||null;
+  const pageImages=Array.isArray(x.images)?x.images.map(im=>typeof im==="string"?im:im&&im.url).filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)).slice(0,6):[];
+  const images=[...new Set([...pageImages,...(pageImage?[pageImage]:[])])].slice(0,6);
   let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
-  return {title:clean(x.title,220),url:x.url,snippet,source,image_url:image,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
+  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:images,image_url:images[0]||null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
  });
 }
 async function listingCopy(env,prompt){
