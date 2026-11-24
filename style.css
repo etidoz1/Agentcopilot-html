@@ -221,14 +221,14 @@ body {
 
 
 /* Accessible mobile navigation drawer and outside-tap backdrop */
-.close-menu{display:none;align-items:center;justify-content:center;width:40px;height:40px;flex:0 0 40px;border:1px solid var(--border-color);border-radius:9px;background:rgba(255,255,255,.06);color:var(--text-main);cursor:pointer}
+.close-menu{display:none;align-items:center;justify-content:center;width:40px;height:40px;flex:0 0 40px;border:1px solid var(--border-color);border-radius:9px;background:rgba(255,255,255,.06);color:var(--text-main);cursor:pointer;position:relative;z-index:10003;pointer-events:auto}
 .close-menu svg{width:21px;height:21px}
 .menu-backdrop{display:none}
 @media(max-width:768px){
  .sidebar{left:-280px!important;right:auto!important;width:min(280px,85vw)!important;height:100dvh!important;overflow-y:auto;z-index:10001!important;transition:left .28s ease-in-out!important;box-shadow:12px 0 35px rgba(0,0,0,.35)}
  .sidebar.show-mobile{left:0!important}
  .sidebar .logo-container{display:flex;align-items:center;justify-content:space-between;gap:10px}
- .close-menu{display:inline-flex!important}
+ .close-menu{display:inline-flex!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important}
  .menu-backdrop{display:block;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.58);border:0;padding:0;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .28s ease,visibility .28s ease}
  body.menu-open .menu-backdrop{opacity:1;visibility:visible;pointer-events:auto}
  body.menu-open{overflow:hidden}
