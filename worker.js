@@ -57,17 +57,27 @@ async function listingPageImages(pageUrl){
   const page=new URL(pageUrl);if(page.protocol!=="https:")return [];
   const response=await fetch(page.href,{headers:{"Accept":"text/html,application/xhtml+xml","User-Agent":"Mozilla/5.0 (compatible; AgentCoPilotPropertyBot/1.0)"},redirect:"follow",signal:AbortSignal.timeout(7000)});
   const type=response.headers.get("content-type")||"";if(!response.ok||!type.toLowerCase().includes("html"))return [];
-  const html=(await response.text()).slice(0,1500000),structured=[],og=[];
-  const add=(target,value)=>{if(typeof value!=="string")return;let u=value.trim().replace(/&amp;/gi,"&").replace(/&#38;/gi,"&");if(!u)return;try{const parsed=new URL(u,page.href),path=parsed.pathname.toLowerCase();if(parsed.protocol!=="https:"||target.includes(parsed.href)||/(?:logo|icon|avatar|favicon|banner|sprite|badge|floor.?plan|map|brochure|watermark|placeholder|no.?image)/i.test(path))return;target.push(parsed.href);}catch{}};
-  const attr=(tag,name)=>{const m=tag.match(new RegExp(name+"=[\\x22\\x27]([^\\x22\\x27]+)","i"));return m?m[1]:"";};
+  const html=(await response.text()).slice(0,1500000),propertyImages=[];
+  const blocked=/(?:logo|icon|avatar|favicon|banner|header|footer|sprite|badge|floor.?plan|map|brochure|watermark|placeholder|no.?image|agent|agency|brand|social|share|cover|thumbnail)/i;
+  const add=(value)=>{if(typeof value!=="string")return;let u=value.trim().replace(/&amp;/gi,"&").replace(/&#38;/gi,"&");if(!u)return;try{const parsed=new URL(u,page.href),path=parsed.pathname.toLowerCase();if(parsed.protocol!=="https:"||blocked.test(path)||propertyImages.includes(parsed.href))return;propertyImages.push(parsed.href);}catch{}};
+  const residentialTypes=["house","apartment","singlefamilyresidence","residence","realestatelisting","realestateproperty"];
+  const visit=(node,depth=0)=>{
+   if(!node||depth>14)return;
+   if(Array.isArray(node)){node.slice(0,120).forEach(x=>visit(x,depth+1));return;}
+   if(typeof node!=="object")return;
+   const types=(Array.isArray(node["@type"])?node["@type"]:[node["@type"]]).filter(Boolean).map(x=>String(x).toLowerCase());
+   if(types.some(t=>residentialTypes.includes(t))){
+    const imgs=Array.isArray(node.image)?node.image:[node.image];
+    for(const im of imgs){if(typeof im==="string")add(im);else if(im&&typeof im==="object")add(im.contentUrl||im.url||im.thumbnailUrl);}
+   }
+   for(const [key,value] of Object.entries(node))if(key!=="logo"&&key!=="image")visit(value,depth+1);
+  };
   for(const block of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)){
-   try{const root=JSON.parse(block[1].replace(/^\s*<!--|-->\s*$/g,""));const visit=(node,depth=0)=>{if(!node||depth>12)return;if(Array.isArray(node)){node.slice(0,80).forEach(x=>visit(x,depth+1));return;}if(typeof node!=="object")return;const types=(Array.isArray(node["@type"])?node["@type"]:[node["@type"]]).filter(Boolean).map(x=>String(x).toLowerCase());const propertyTypes=["house","apartment","residence","singlefamilyresidence","accommodation","realestatelisting"];if(types.some(t=>propertyTypes.includes(t))){const imgs=Array.isArray(node.image)?node.image:[node.image];for(const im of imgs){if(typeof im==="string")add(structured,im);else if(im&&typeof im==="object")add(structured,im.url||im.contentUrl);}}for(const [key,value] of Object.entries(node)){if(key!=="image"&&key!=="logo")visit(value,depth+1);}};visit(root);
-   }catch{}
+   try{const root=JSON.parse(block[1].replace(/^\s*<!--|-->\s*$/g,""));visit(root);}catch{}
   }
-  for(const tag of html.match(/<meta[^>]*>/gi)||[]){const key=(attr(tag,"property")||attr(tag,"name")).toLowerCase();if(key==="og:image"||key==="og:image:url"||key==="twitter:image"||key==="twitter:image:src")add(og,attr(tag,"content"));}
-  // Prefer a property's structured image gallery. Use only one Open Graph fallback when no property images are declared.
-  return (structured.length?structured:og).slice(0,6);
- }catch(error){console.warn("Could not verify listing-page image metadata",pageUrl,error);return [];}
+  // Deliberately do not use og:image or twitter:image: those usually represent the agency's banner or social preview, not the house.
+  return propertyImages.slice(0,6);
+ }catch(error){console.warn("Could not verify property-specific image metadata",pageUrl,error);return [];}
 }
 function isLikelyResidentialListing(item){
  const title=String(item.title||'').toLowerCase();
