@@ -52,6 +52,37 @@ async function aiSearch(env,text){
  ["purpose","country","city","state","property_type","min_price","max_price","currency","bedrooms"].forEach(k=>{if(criteria[k]!==null&&criteria[k]!==undefined&&criteria[k]!=="")params.set(k,String(criteria[k]));});
  return {criteria,params};
 }
+function filterExtractedPropertyImages(images,pageUrl){
+ const blocked=/(?:logo|icon|avatar|favicon|banner|header|footer|sprite|badge|floor.?plan|map|brochure|watermark|placeholder|no.?image|agent|agency|brand|social|share|cover|thumbnail)/i;
+ const base=new URL(pageUrl);
+ const out=[];
+ for(const value of Array.isArray(images)?images:[]){
+  if(typeof value!=="string")continue;
+  try{
+   const u=new URL(value,base.href),path=u.pathname.toLowerCase();
+   if(u.protocol!=="https:"||blocked.test(path)||out.includes(u.href))continue;
+   if(!/\.(?:jpe?g|png|webp|avif)(?:$)/i.test(path)&&!/(?:image|photo|gallery|media|property|listing|upload|cdn)/i.test(path))continue;
+   out.push(u.href);
+  }catch{}
+  if(out.length>=6)break;
+ }
+ return out;
+}
+async function tavilyListingImages(env,items){
+ const pending=items.filter(x=>!x.image_urls?.length&&x.url).slice(0,8);
+ if(!pending.length||!env.TAVILY_API_KEY)return;
+ try{
+  const response=await fetch("https://api.tavily.com/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,urls:pending.map(x=>x.url),extract_depth:"basic",include_images:true,include_usage:true}),signal:AbortSignal.timeout(30000)});
+  if(!response.ok){console.warn("Tavily image extraction unavailable",response.status);return;}
+  const payload=await response.json();
+  for(const extracted of Array.isArray(payload.results)?payload.results:[]){
+   const item=pending.find(x=>x.url===extracted.url);if(!item)continue;
+   const images=filterExtractedPropertyImages(extracted.images,item.url);
+   if(images.length){item.image_urls=images;item.image_url=images[0];item.image_attribution="Images extracted from the original property listing page by Tavily; confirm against source listing.";}
+  }
+  console.log("Tavily property image extraction",JSON.stringify({attempted:pending.length,withImages:pending.filter(x=>x.image_urls?.length).length,usage:payload.usage||null}));
+ }catch(error){console.warn("Tavily property image extraction failed",error);}
+}
 async function listingPageImages(pageUrl){
  try{
   const page=new URL(pageUrl);if(page.protocol!=="https:")return [];
@@ -109,7 +140,8 @@ async function externalPropertySearch(env,query,criteria){
   const snippet=cleanExternalSnippet(x.content||"");let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
   return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"};
  });
- await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property structured data or single Open Graph fallback":"unavailable";}));
+ await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property-specific structured data from the original listing page":"unavailable";}));
+ await tavilyListingImages(env,results);
  const max=Number(criteria.max_price),currency=String(criteria.currency||"").toUpperCase();
  const symbol=currency==="GBP"?"£":currency==="USD"?"\\$":currency==="EUR"?"€":currency==="NGN"?"₦":null;
  for(const item of results){item.budget_status="not_verified";item.criteria_currency=currency||null;if(!Number.isFinite(max)||max<=0||!symbol)continue;const text=item.title+" "+item.snippet;const matches=[...text.matchAll(new RegExp(symbol+"\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)","g"))].map(m=>Number(m[1].replace(/,/g,""))).filter(Number.isFinite);if(matches.length===1){item.listing_price=matches[0];item.budget_status=matches[0]>max?"over_budget":"within_budget";}}
