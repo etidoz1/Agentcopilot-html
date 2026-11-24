@@ -203,7 +203,7 @@ export default {async fetch(request,env){
    if(url.pathname==="/api/leads"&&request.method==="GET"){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
     const admin=await isAdmin(user);const sql="SELECT l.*,p.title AS property_title,p.city,p.country,p.price,p.currency,p.seller_name FROM leads l LEFT JOIN properties p ON p.id=l.property_id "+(admin?"":"WHERE l.seller_uid=? OR l.buyer_uid=? ")+"ORDER BY l.created_at DESC LIMIT 100";
-    const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();return json({leads:rows.results||[]},200,headers);
+    const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();return json({leads:(rows.results||[]).map(x=>({...x,can_update:admin||x.seller_uid===user.uid}))},200,headers);
    }
    if(url.pathname==="/api/leads"&&request.method==="POST"){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to send an enquiry."},401,headers);
