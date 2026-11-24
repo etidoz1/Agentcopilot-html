@@ -47,12 +47,11 @@ async function externalPropertySearch(env,query,criteria){
  if(!env.TAVILY_API_KEY)throw new Error("Global property search is not configured yet.");
  const location=[criteria.city,criteria.state,criteria.country].filter(Boolean).join(", ");
  const intent=criteria.purpose==="rent"?"property for rent rental listing":"property for sale real estate listing";
- const searchQuery=[query,intent,location,"actual property listing price photographs"].filter(Boolean).join(" ").slice(0,900);
+ const searchQuery=[query,intent,location,"actual property listing asking price property photographs"].filter(Boolean).join(" ").slice(0,900);
  const response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,query:searchQuery,topic:"general",search_depth:"basic",max_results:8,include_answer:false,include_images:true,include_image_descriptions:true,include_raw_content:true})});
  const payload=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(response.status===401||response.status===403?"The global search key was rejected. Check the Tavily secret in Cloudflare.":"The global property search provider is temporarily unavailable.");
- const results=Array.isArray(payload.results)?payload.results:[];
- return results.filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string").slice(0,8).map(x=>{
+ const results=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string").slice(0,8).map(x=>{
   const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);
   const md=raw.match(/!\[[^\]]*\]\((https:\/\/[^)\s]+)(?:\s+[^)]*)?\)/i);
   const og=raw.match(/(?:og:image|twitter:image)[\s:=]+["']?(https:\/\/[^\s"'<>]+)/i);
@@ -62,6 +61,27 @@ async function externalPropertySearch(env,query,criteria){
   let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
   return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:images,image_url:images[0]||null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
  });
+ // Tavily search can omit page images. Extract only the first five image-less pages in one low-cost batch.
+ const needs=results.filter(x=>!x.image_urls.length).slice(0,5);
+ if(needs.length){
+  try{
+   const ex=await fetch("https://api.tavily.com/extract",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,urls:needs.map(x=>x.url),extract_depth:"basic",include_images:true})});
+   if(ex.ok){const ep=await ex.json();const byUrl=new Map((Array.isArray(ep.results)?ep.results:[]).map(x=>[x.url,Array.isArray(x.images)?x.images.filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)).slice(0,6):[]]));
+    for(const item of needs){const found=byUrl.get(item.url)||[];if(found.length){item.image_urls=found;item.image_url=found[0];}}
+   }
+  }catch(err){console.warn("Tavily image extraction fallback failed",err);}
+ }
+ // Only classify a price when the source gives one unambiguous amount in the requested currency.
+ const max=Number(criteria.max_price),currency=String(criteria.currency||"").toUpperCase();
+ const symbol=currency==="GBP"?"£":currency==="USD"?"\\$":currency==="EUR"?"€":currency==="NGN"?"₦":null;
+ for(const item of results){
+  item.budget_status="not_verified";item.criteria_currency=currency||null;
+  if(!Number.isFinite(max)||max<=0||!symbol)continue;
+  const text=item.title+" "+item.snippet;
+  const matches=[...text.matchAll(new RegExp(symbol+"\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)","g"))].map(m=>Number(m[1].replace(/,/g,""))).filter(Number.isFinite);
+  if(matches.length===1){item.listing_price=matches[0];item.budget_status=matches[0]>max?"over_budget":"within_budget";}
+ }
+ return results;
 }
 async function listingCopy(env,prompt){
  const instruction="You are AgentCoPilot's real-estate listing writer. Use only seller-supplied facts. Never invent or infer features, condition, security, size, amenities, price, legal status or neighborhood claims. If input is not genuine property information, ask for valid details. Write concise, accurate copy only.";
