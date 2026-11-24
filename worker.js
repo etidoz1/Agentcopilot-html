@@ -3,10 +3,20 @@ function json(data,status=200,headers={}){return new Response(JSON.stringify(dat
 function clean(v,n=500){return typeof v==="string"?v.trim().slice(0,n):"";}
 function money(v){const n=Number(v);return Number.isFinite(n)&&n>0?n:null;}
 function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
+let firebaseCerts=null,firebaseCertExpires=0;
+function b64urlBytes(value){const s=value.replace(/-/g,"+").replace(/_/g,"/");const padded=s+"=".repeat((4-s.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
+function derNode(bytes,pos){const tag=bytes[pos++];let length=bytes[pos++];if(length&128){const count=length&127;length=0;for(let i=0;i<count;i++)length=(length<<8)|bytes[pos++];}const start=pos;return {tag,start,next:start+length};}
+function certificateSpki(pem){const b64=pem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s/g,"");const raw=atob(b64);const der=Uint8Array.from(raw,c=>c.charCodeAt(0));const root=derNode(der,0),tbs=derNode(der,root.start);let pos=tbs.start;let node=derNode(der,pos);if(node.tag===0xa0)pos=node.next;for(let i=0;i<5;i++)pos=derNode(der,pos).next;const spki=derNode(der,pos);return der.slice(pos,spki.next);}
 async function currentUser(request,env){
- const token=(request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"").trim();if(!token||!env.FIREBASE_API_KEY)return null;
- const r=await fetch("https://identitytoolkit.googleapis.com/v1/accounts:lookup?key="+encodeURIComponent(env.FIREBASE_API_KEY),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({idToken:token})});
- if(!r.ok)return null;const d=await r.json();const u=d.users&&d.users[0];return u&&u.localId?{uid:u.localId,email:u.email||""}:null;
+ const token=(request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"").trim();if(!token)return null;
+ try{
+  const parts=token.split(".");if(parts.length!==3)return null;
+  const header=JSON.parse(new TextDecoder().decode(b64urlBytes(parts[0]))),claims=JSON.parse(new TextDecoder().decode(b64urlBytes(parts[1])));
+  const now=Math.floor(Date.now()/1000);if(header.alg!=="RS256"||!header.kid||claims.aud!=="agentcopilot-98817"||claims.iss!=="https://securetoken.google.com/agentcopilot-98817"||!claims.sub||claims.sub.length>128||!claims.exp||claims.exp<=now||claims.iat>now+60||!claims.auth_time)return null;
+  if(!firebaseCerts||firebaseCertExpires<Date.now()){const r=await fetch("https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com");if(!r.ok)return null;firebaseCerts=await r.json();firebaseCertExpires=Date.now()+50*60*1000;}
+  const pem=firebaseCerts[header.kid];if(!pem)return null;const spki=certificateSpki(pem);const key=await crypto.subtle.importKey("spki",spki,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
+  const signature=b64urlBytes(parts[2]),message=new TextEncoder().encode(parts[0]+"."+parts[1]);const valid=await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,signature,message);return valid?{uid:claims.sub,email:claims.email||""}:null;
+ }catch(e){console.error("Firebase token verification failed",e);return null;}
 }
 function filters(params){
  const c=["p.status = 'published'"],v=[];const add=(sql,val)=>{c.push(sql);v.push(val);};
@@ -39,7 +49,7 @@ async function listingCopy(env,prompt){
 }
 export default {async fetch(request,env){
  const origin=request.headers.get("Origin")||"";const allowed=(env.ALLOWED_ORIGIN||"https://etidoz1.github.io").split(",").map(x=>x.trim()).filter(Boolean);const headers=cors(origin,allowed);if(request.method==="OPTIONS")return origin&&!allowed.includes(origin)?json({error:"Origin not allowed."},403):new Response(null,{status:204,headers});
- const url=new URL(request.url);if(url.pathname==="/health"&&request.method==="GET")return json({status:"ok",service:"AgentCoPilot property marketplace",database:!!env.DB,ai:!!env.GEMINI_API_KEY,auth:!!env.FIREBASE_API_KEY},200,headers);
+ const url=new URL(request.url);if(url.pathname==="/health"&&request.method==="GET")return json({status:"ok",service:"AgentCoPilot property marketplace",database:!!env.DB,ai:!!env.GEMINI_API_KEY},200,headers);
  if(origin&&!allowed.includes(origin))return json({error:"Origin not allowed."},403,headers);
  try{
   if(url.pathname==="/api/properties"&&request.method==="GET"){const rows=await searchProperties(env,url.searchParams,Number(url.searchParams.get("limit")||24));return json({properties:rows},200,headers);}
