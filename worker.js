@@ -24,9 +24,17 @@ async function currentUser(request,env){
   const now=Math.floor(Date.now()/1000);if(header.alg!=="RS256"||!header.kid||claims.aud!=="agentcopilot-98817"||claims.iss!=="https://securetoken.google.com/agentcopilot-98817"||!claims.sub||claims.sub.length>128||!claims.exp||claims.exp<=now||claims.iat>now+60||!claims.auth_time)return null;
   if(!firebaseCerts||firebaseCertExpires<Date.now()){const r=await fetch("https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com");if(!r.ok)return null;firebaseCerts=await r.json();firebaseCertExpires=Date.now()+50*60*1000;}
   const pem=firebaseCerts[header.kid];if(!pem)return null;const spki=certificateSpki(pem);const key=await crypto.subtle.importKey("spki",spki,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
-  const signature=b64urlBytes(parts[2]),message=new TextEncoder().encode(parts[0]+"."+parts[1]);const valid=await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,signature,message);return valid?{uid:claims.sub,email:claims.email||""}:null;
+  const signature=b64urlBytes(parts[2]),message=new TextEncoder().encode(parts[0]+"."+parts[1]);const valid=await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,signature,message);return valid?{uid:claims.sub,email:claims.email||"",token}:null;
  }catch(e){console.error("Firebase token verification failed",e);return null;}
 }
+
+async function userRole(user){
+ const url="https://firestore.googleapis.com/v1/projects/agentcopilot-98817/databases/(default)/documents/users/"+encodeURIComponent(user.uid);
+ try{const r=await fetch(url,{headers:{Authorization:"Bearer "+user.token}});if(!r.ok)return "user";const d=await r.json();return String(d.fields?.role?.stringValue||"user").toLowerCase();}catch{return "user";}
+}
+async function isAdmin(user){const role=await userRole(user);return role==="admin"||role==="owner";}
+async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();}
+
 function filters(params){
  const c=["p.status = 'published'"],v=[];const add=(sql,val)=>{c.push(sql);v.push(val);};
  const purpose=clean(params.get("purpose"),10).toLowerCase();if(purpose==="sale"||purpose==="rent")add("p.purpose = ?",purpose);
@@ -169,7 +177,7 @@ export default {async fetch(request,env){
    const id=crypto.randomUUID(),now=new Date().toISOString(),features=Array.isArray(b.features)?b.features.map(x=>clean(x,100)).filter(Boolean).slice(0,20):[];
    const statements=[env.DB.prepare("INSERT INTO properties (id,seller_uid,seller_name,seller_phone,seller_email,purpose,property_type,title,description,location,city,state,country,price,currency,bedrooms,bathrooms,size_sqm,condition,features,status,created_at,updated_at,seller_authority_confirmed,contact_consent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,? ,'published',?,?,1,1)").bind(id,user.uid,name,phone,user.email,purpose,type,title,description,location,city,state,country,price,currency,Number(b.bedrooms)||null,Number(b.bathrooms)||null,Number(b.size_sqm)||null,clean(b.condition,80),JSON.stringify(features),now,now)];
    photos.forEach((photo,i)=>statements.push(env.DB.prepare("INSERT INTO property_images (id,property_id,image_data,mime_type,sort_order,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),id,photo,photo.slice(5,photo.indexOf(";")),i,now)));
-   await env.DB.batch(statements);return json({success:true,property_id:id,message:"Your property has been published."},201,headers);
+   await env.DB.batch(statements);try{await notify(env,user.uid,"listing_created","Property published",title+" is now live on AgentCoPilot.","./ai-tools.html#seller-panel");}catch(e){console.error("Listing notification failed",e);}return json({success:true,property_id:id,message:"Your property has been published."},201,headers);
   }
   if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
    const id=url.pathname.split("/").pop(),row=await env.DB.prepare("SELECT * FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);
@@ -181,6 +189,61 @@ export default {async fetch(request,env){
    const results=rows.map(row=>{let score=0;const reasons=[];if(parsed.criteria.city&&row.city.toLowerCase().includes(String(parsed.criteria.city).toLowerCase())){score+=30;reasons.push("Preferred location");}if(parsed.criteria.property_type&&row.property_type.toLowerCase().includes(String(parsed.criteria.property_type).toLowerCase())){score+=20;reasons.push("Property type");}if(parsed.criteria.bedrooms&&Number(row.bedrooms)>=Number(parsed.criteria.bedrooms)){score+=15;reasons.push("Bedroom requirement");}if(parsed.criteria.max_price&&parsed.criteria.currency&&row.currency===String(parsed.criteria.currency).toUpperCase()&&row.price<=Number(parsed.criteria.max_price)){score+=20;reasons.push("Within budget");}if(parsed.criteria.purpose&&row.purpose===parsed.criteria.purpose){score+=15;reasons.push("Sale/rent preference");}const fs=JSON.parse(row.features||"[]").map(x=>x.toLowerCase());features.forEach(f=>{if(fs.some(x=>x.includes(String(f).toLowerCase()))){score+=5;reasons.push("Feature: "+f);}});return Object.assign({},row,{match_score:Math.min(score,100),match_reasons:reasons});}).sort((a,b)=>b.match_score-a.match_score);
    return json({criteria:parsed.criteria,properties:results,external_results:external,search_scope:"global_web_and_agentcopilot"},200,headers);
   }
+
+   if(url.pathname==="/api/notifications"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    const rows=await env.DB.prepare("SELECT id,type,title,message,link,read_at,created_at FROM notifications WHERE user_uid=? ORDER BY created_at DESC LIMIT 30").bind(user.uid).all();
+    return json({notifications:rows.results||[],unread:(rows.results||[]).filter(x=>!x.read_at).length},200,headers);
+   }
+   if(url.pathname.startsWith("/api/notifications/")&&request.method==="PATCH"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    const id=url.pathname.split("/").pop();const result=await env.DB.prepare("UPDATE notifications SET read_at=? WHERE id=? AND user_uid=?").bind(new Date().toISOString(),id,user.uid).run();
+    return json({success:true,updated:result.meta?.changes||0},200,headers);
+   }
+   if(url.pathname==="/api/leads"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    const admin=await isAdmin(user);const sql="SELECT l.*,p.title AS property_title,p.city,p.country,p.price,p.currency,p.seller_name FROM leads l LEFT JOIN properties p ON p.id=l.property_id "+(admin?"":"WHERE l.seller_uid=? OR l.buyer_uid=? ")+"ORDER BY l.created_at DESC LIMIT 100";
+    const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();return json({leads:rows.results||[]},200,headers);
+   }
+   if(url.pathname==="/api/leads"&&request.method==="POST"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to send an enquiry."},401,headers);
+    const b=await request.json(),propertyId=clean(b.property_id,80),name=clean(b.buyer_name,100)||clean(user.email.split("@")[0],80),phone=clean(b.buyer_phone,40),message=clean(b.message,1200);
+    if(!propertyId||!message)return json({error:"Choose a property and include a short enquiry message."},400,headers);
+    const property=await env.DB.prepare("SELECT id,seller_uid,seller_name,title FROM properties WHERE id=? AND status='published'").bind(propertyId).first();
+    if(!property)return json({error:"This listing is no longer available on AgentCoPilot."},404,headers);
+    if(property.seller_uid===user.uid)return json({error:"You cannot enquire about your own listing."},400,headers);
+    const id=crypto.randomUUID(),now=new Date().toISOString();
+    await env.DB.prepare("INSERT INTO leads (id,property_id,seller_uid,buyer_uid,buyer_name,buyer_email,buyer_phone,message,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, 'new',?,?)").bind(id,property.id,property.seller_uid,user.uid,name,user.email,phone,message,now,now).run();
+    await notify(env,property.seller_uid,"new_lead","New property enquiry",name+" is interested in "+property.title,"./leads.html");
+    await notify(env,user.uid,"enquiry_sent","Enquiry sent","Your enquiry for "+property.title+" was sent to the seller.","./leads.html");
+    return json({success:true,lead_id:id,message:"Your enquiry has been sent to the seller."},201,headers);
+   }
+   if(url.pathname.startsWith("/api/leads/")&&request.method==="PATCH"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    const id=url.pathname.split("/").pop(),b=await request.json(),status=clean(b.status,20).toLowerCase();if(!["new","contacted","viewing","closed","lost"].includes(status))return json({error:"Invalid lead stage."},400,headers);
+    const lead=await env.DB.prepare("SELECT * FROM leads WHERE id=?").bind(id).first();if(!lead)return json({error:"Enquiry not found."},404,headers);
+    const admin=await isAdmin(user);if(lead.seller_uid!==user.uid&&!admin)return json({error:"Only the listing seller or an administrator can update this enquiry."},403,headers);
+    await env.DB.prepare("UPDATE leads SET status=?,updated_at=? WHERE id=?").bind(status,new Date().toISOString(),id).run();
+    await notify(env,lead.buyer_uid,"lead_update","Enquiry updated","The seller changed your enquiry status to "+status+".","./leads.html");return json({success:true,status},200,headers);
+   }
+   if(url.pathname==="/api/admin/overview"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user))return json({error:"Administrator access required."},403,headers);
+    const [properties,sellers,leadCount,counts]=await Promise.all([
+     env.DB.prepare("SELECT id,title,seller_name,seller_email,city,country,price,currency,purpose,status,created_at FROM properties ORDER BY created_at DESC LIMIT 100").all(),
+     env.DB.prepare("SELECT seller_uid,seller_name,MAX(seller_email) AS seller_email,COUNT(*) AS listing_count FROM properties GROUP BY seller_uid ORDER BY MAX(created_at) DESC LIMIT 100").all(),
+     env.DB.prepare("SELECT COUNT(*) AS total FROM leads").first(),
+     env.DB.prepare("SELECT status,COUNT(*) AS total FROM properties GROUP BY status").all()
+    ]);
+    return json({properties:properties.results||[],sellers:sellers.results||[],lead_count:leadCount?.total||0,property_counts:counts.results||[]},200,headers);
+   }
+   if(url.pathname.startsWith("/api/admin/properties/")&&request.method==="PATCH"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user))return json({error:"Administrator access required."},403,headers);
+    const id=url.pathname.split("/").pop(),b=await request.json(),status=clean(b.status,20).toLowerCase();if(!["published","paused","removed"].includes(status))return json({error:"Invalid listing status."},400,headers);
+    const property=await env.DB.prepare("SELECT seller_uid,title FROM properties WHERE id=?").bind(id).first();if(!property)return json({error:"Listing not found."},404,headers);
+    await env.DB.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=?").bind(status,new Date().toISOString(),id).run();
+    await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
+   }
+
   if(url.pathname==="/api/generate"&&request.method==="POST"){const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
   return json({error:"Not found."},404,headers);
  }catch(e){console.error("AgentCoPilot API error",e);return json({error:e.message||"The request could not be completed."},500,headers);}

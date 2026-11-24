@@ -1,73 +1,20 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
-
-const firebaseConfig = {
-    apiKey: "AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",
-    authDomain: "agentcopilot-98817.firebaseapp.com",
-    projectId: "agentcopilot-98817",
-    storageBucket: "agentcopilot-98817.firebasestorage.app",
-    messagingSenderId: "1061657518684",
-    appId: "1:1061657518684:web:5db7baa214b1d2da08fc99"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-async function readUserRole(user) {
-    const snapshot = await getDoc(doc(db, "users", user.uid));
-    // Older accounts used the "agent" role; keep them on the owner workspace.
-    return String(snapshot.exists() ? (snapshot.data().role || "owner") : "owner").toLowerCase();
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-    if (typeof lucide !== "undefined") lucide.createIcons();
-
-    const sidebar = document.querySelector(".sidebar");
-    const menuToggle = document.querySelector(".menu-toggle");
-    const closeMenu = document.querySelector(".close-menu");
-    menuToggle?.addEventListener("click", () => sidebar?.classList.toggle("show-mobile"));
-    closeMenu?.addEventListener("click", () => sidebar?.classList.remove("show-mobile"));
-
-    const logoutBtn = document.getElementById("logout-btn");
-    logoutBtn?.addEventListener("click", async () => {
-        try {
-            await signOut(auth);
-            window.location.replace("./login.html");
-        } catch (error) {
-            console.error("Logout error:", error);
-            alert("Logout failed. Please try again.");
-        }
-    });
-
-    onAuthStateChanged(auth, async (user) => {
-        const page = window.location.pathname.split("/").pop() || "index.html";
-        if (!user) {
-            window.location.replace("./login.html");
-            return;
-        }
-
-        try {
-            const role = await readUserRole(user);
-            const isAdmin = role === "admin";
-            const isAdminPage = page === "admin.html";
-
-            // Admin accounts stay in the admin area and cannot enter owner pages.
-            if (isAdmin && !isAdminPage) {
-                window.location.replace("./admin.html");
-                return;
-            }
-
-            // Owners (including legacy "agent" accounts) may open the admin panel.
-            if (isAdmin) {
-                document.querySelectorAll('.nav-menu a[href="./index.html"], .nav-menu a[href="./leads.html"], .nav-menu a[href="./ai-tools.html"]').forEach(link => link.remove());
-            }
-        } catch (error) {
-            console.error("Account role check failed:", error);
-            alert("We could not verify your account role. Please sign in again or contact the workspace owner.");
-            await signOut(auth);
-            window.location.replace("./login.html");
-        }
-    });
+const firebaseConfig={apiKey:"AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",authDomain:"agentcopilot-98817.firebaseapp.com",projectId:"agentcopilot-98817",storageBucket:"agentcopilot-98817.firebasestorage.app",messagingSenderId:"1061657518684",appId:"1:1061657518684:web:5db7baa214b1d2da08fc99"};
+const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),API="https://agentcopilot-html.miaj66355.workers.dev";
+const $=s=>document.querySelector(s),esc=v=>String(v??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function token(){if(!auth.currentUser)throw new Error("Please sign in again.");return auth.currentUser.getIdToken();}
+async function api(path,options={}){const t=await token(),r=await fetch(API+path,{...options,headers:{"Content-Type":"application/json","Authorization":"Bearer "+t,...(options.headers||{})}});const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed.");return d;}
+async function readUserRole(user){const s=await getDoc(doc(db,"users",user.uid));return String(s.exists()?(s.data().role||"user"):"user").toLowerCase();}
+function showError(el,msg){if(el)el.innerHTML='<div class="empty">'+esc(msg)+'</div>';}
+function initNotifications(){const host=document.querySelector('.user-profile');if(!host||host.querySelector('.notification-button'))return;host.querySelectorAll('.notification-icon').forEach(x=>x.remove());const button=document.createElement('button');button.className='notification-button';button.type='button';button.setAttribute('aria-label','Notifications');button.innerHTML='<i data-lucide="bell"></i><span class="notification-count" hidden></span>';host.prepend(button);const panel=document.createElement('section');panel.className='notification-panel';panel.hidden=true;panel.innerHTML='<div class="notification-heading"><strong>Notifications</strong><button type="button" class="notification-refresh">Refresh</button></div><div class="notification-items"><div class="empty">Loading notifications…</div></div>';host.append(panel);if(window.lucide)window.lucide.createIcons();
+ async function load(){const list=panel.querySelector('.notification-items');try{const d=await api('/api/notifications');const badge=button.querySelector('.notification-count');badge.textContent=d.unread||'';badge.hidden=!(d.unread>0);list.innerHTML=d.notifications.length?d.notifications.map(n=>'<article class="notification-item '+(n.read_at?'':'unread')+'"><div><strong>'+esc(n.title)+'</strong><p>'+esc(n.message)+'</p><small>'+esc(new Date(n.created_at).toLocaleString())+'</small></div><div class="notification-actions">'+(n.link?'<a href="'+esc(n.link)+'">Open</a>':'')+(!n.read_at?'<button type="button" data-read-notice="'+esc(n.id)+'">Mark read</button>':'<span>Read</span>')+'</div></article>').join(''):'<div class="empty">You have no notifications yet. New enquiries and listing updates will appear here.</div>';}catch(e){showError(list,e.message);}}
+ button.addEventListener('click',()=>{panel.hidden=!panel.hidden;if(!panel.hidden)load();});panel.querySelector('.notification-refresh').addEventListener('click',load);panel.addEventListener('click',async e=>{const b=e.target.closest('[data-read-notice]');if(!b)return;try{await api('/api/notifications/'+encodeURIComponent(b.dataset.readNotice),{method:'PATCH',body:'{}'});await load();}catch(err){alert(err.message);}});load();}
+async function loadLeads(){const host=$('#leads-list');if(!host)return;try{const d=await api('/api/leads');const leads=d.leads||[];$('#leads-total').textContent=leads.length;const stages=['new','contacted','viewing','closed','lost'];$('#lead-counts').innerHTML=stages.map(s=>'<span class="lead-count">'+s+': '+leads.filter(x=>x.status===s).length+'</span>').join('');host.innerHTML=leads.length?leads.map(l=>'<article class="lead-card"><div class="lead-main"><div><span class="lead-stage stage-'+esc(l.status)+'">'+esc(l.status)+'</span><h3>'+esc(l.property_title||'Property enquiry')+'</h3><p><strong>'+esc(l.buyer_name)+'</strong> · '+esc(l.buyer_email)+'</p><p>'+esc(l.message)+'</p><small>'+esc([l.city,l.country].filter(Boolean).join(', '))+' · '+esc(new Date(l.created_at).toLocaleString())+'</small></div><div class="lead-controls"><label>Pipeline stage<select data-lead-status="'+esc(l.id)+'">'+stages.map(s=>'<option value="'+s+'" '+(l.status===s?'selected':'')+'>'+s.charAt(0).toUpperCase()+s.slice(1)+'</option>').join('')+'</select></label><a href="mailto:'+encodeURIComponent(l.buyer_email)+'">Email buyer</a>'+(l.buyer_phone?'<a href="tel:'+esc(l.buyer_phone)+'">Call buyer</a>':'')+'</div></div></article>').join(''):'<div class="empty">No enquiries yet. When a buyer sends an enquiry about one of your AgentCoPilot listings, it will appear here automatically.</div>';}catch(e){showError(host,e.message);}}
+async function loadAdmin(){const host=$('#admin-properties');if(!host)return;try{const [d,ld]=await Promise.all([api('/api/admin/overview'),api('/api/leads')]);$('#admin-property-total').textContent=d.properties.length;$('#admin-seller-total').textContent=d.sellers.length;$('#admin-lead-total').textContent=d.lead_count;$('#admin-status-total').textContent=(d.property_counts||[]).map(x=>x.status+': '+x.total).join(' · ')||'No listings';$('#admin-sellers').innerHTML=d.sellers.length?d.sellers.map(s=>'<tr><td>'+esc(s.seller_name)+'</td><td>'+esc(s.seller_email)+'</td><td>'+esc(s.listing_count)+'</td></tr>').join(''):'<tr><td colspan="3">No seller listings yet.</td></tr>';host.innerHTML=d.properties.length?d.properties.map(p=>'<tr><td><strong>'+esc(p.title)+'</strong><small>'+esc([p.city,p.country].filter(Boolean).join(', '))+'</small></td><td>'+esc(p.seller_name)+'<small>'+esc(p.seller_email)+'</small></td><td>'+esc(p.purpose)+' · '+esc(p.currency)+' '+Number(p.price).toLocaleString()+'</td><td><span class="lead-stage stage-'+esc(p.status)+'">'+esc(p.status)+'</span></td><td><select data-property-status="'+esc(p.id)+'"><option value="published" '+(p.status==='published'?'selected':'')+'>Published</option><option value="paused" '+(p.status==='paused'?'selected':'')+'>Paused</option><option value="removed" '+(p.status==='removed'?'selected':'')+'>Removed</option></select></td></tr>').join(''):'<tr><td colspan="5">No property listings have been submitted yet.</td></tr>';const lh=$('#admin-leads');if(lh)lh.innerHTML=(ld.leads||[]).length?ld.leads.slice(0,30).map(l=>'<tr><td>'+esc(l.buyer_name)+'<small>'+esc(l.buyer_email)+'</small></td><td>'+esc(l.property_title||'Property enquiry')+'</td><td>'+esc(l.seller_name)+'</td><td>'+esc(l.status)+'</td><td>'+esc(new Date(l.created_at).toLocaleString())+'</td></tr>').join(''):'<tr><td colspan="5">No buyer enquiries yet.</td></tr>';}catch(e){showError(host,e.message);}}
+document.addEventListener('DOMContentLoaded',()=>{if(window.lucide)window.lucide.createIcons();const sidebar=$('.sidebar');$('.menu-toggle')?.addEventListener('click',()=>sidebar?.classList.toggle('show-mobile'));$('.close-menu')?.addEventListener('click',()=>sidebar?.classList.remove('show-mobile'));$('#logout-btn')?.addEventListener('click',async()=>{await signOut(auth);location.replace('./login.html');});
+ onAuthStateChanged(auth,async user=>{const page=location.pathname.split('/').pop()||'index.html';if(!user){location.replace('./login.html');return;}try{const role=await readUserRole(user),privileged=['owner','admin'].includes(role);if(page==='admin.html'&&!privileged){location.replace('./index.html');return;}if(role==='admin'&&page!=='admin.html'){location.replace('./admin.html');return;}if(!privileged)document.querySelectorAll('.nav-menu a[href="./admin.html"]').forEach(a=>a.remove());initNotifications();if(page==='leads.html')loadLeads();if(page==='admin.html')loadAdmin();}catch(e){console.error(e);alert('We could not verify your account role. Please sign in again.');await signOut(auth);location.replace('./login.html');}});
+ $('#leads-list')?.addEventListener('change',async e=>{const s=e.target.closest('[data-lead-status]');if(!s)return;try{await api('/api/leads/'+encodeURIComponent(s.dataset.leadStatus),{method:'PATCH',body:JSON.stringify({status:s.value})});await loadLeads();}catch(err){alert(err.message);loadLeads();}});
+ $('#admin-properties')?.addEventListener('change',async e=>{const s=e.target.closest('[data-property-status]');if(!s)return;try{await api('/api/admin/properties/'+encodeURIComponent(s.dataset.propertyStatus),{method:'PATCH',body:JSON.stringify({status:s.value})});await loadAdmin();}catch(err){alert(err.message);loadAdmin();}});
 });

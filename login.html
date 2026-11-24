@@ -67,7 +67,7 @@
             try {
                 const credential = await signInWithEmailAndPassword(auth, email, password);
                 const profile = await getDoc(doc(db, "users", credential.user.uid));
-                const role = String(profile.exists() ? (profile.data().role || "owner") : "owner").toLowerCase();
+                const role = String(profile.exists() ? (profile.data().role || "user") : "user").toLowerCase();
                 window.location.replace(role === "admin" ? "./admin.html" : "./index.html");
             } catch (error) {
                 if (auth.currentUser) await signOut(auth);
