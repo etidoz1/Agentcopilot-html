@@ -1,6 +1,15 @@
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 function json(data,status=200,headers={}){return new Response(JSON.stringify(data),{status,headers:Object.assign({"Content-Type":"application/json; charset=utf-8"},headers)});}
 function clean(v,n=500){return typeof v==="string"?v.trim().slice(0,n):"";}
+function cleanExternalSnippet(value){
+ let text=typeof value==="string"?value:"";
+ text=text.replace(/<!--[\s\S]*?-->/g," ").replace(/<[^>]*>/g," ").replace(/&nbsp;|&#160;/gi," ").replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">");
+ const junk=[/property images coming soon/gi,/loading (?:development )?carousel/gi,/see more of this development/gi,/highlight/gi,/premium/gi,/just added/gi,/back to market/gi,/new home/gi,/outside space/gi,/extended warranties/gi,/\b\d+\s*\/\s*\d+\b/g,/\b\d+\s+results?\b/gi,/\[\.\.\.\]/g];
+ for(const re of junk)text=text.replace(re," ");
+ text=text.replace(/\s+/g," ").trim();
+ if(!text||text.length<45||/^(?:houses?|homes?|properties?)\s+for\s+(?:sale|rent)\b/i.test(text))return "The source did not provide a clean property description. Open the original listing to review its details.";
+ return text.slice(0,650);
+}
 function money(v){const n=Number(v);return Number.isFinite(n)&&n>0?n:null;}
 function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
 let firebaseCerts=null,firebaseCertExpires=0;
@@ -69,7 +78,7 @@ async function externalPropertySearch(env,query,criteria){
  const payload=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(response.status===401||response.status===403?"The global search key was rejected. Check the Tavily secret in Cloudflare.":"The global property search provider is temporarily unavailable.");
  const results=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string").slice(0,8).map(x=>{
-  const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
+  const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=cleanExternalSnippet(x.content||raw);let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
   return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
  });
  await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property structured data or single Open Graph fallback":"unavailable";}));
