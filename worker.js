@@ -69,17 +69,35 @@ async function listingPageImages(pageUrl){
   return (structured.length?structured:og).slice(0,6);
  }catch(error){console.warn("Could not verify listing-page image metadata",pageUrl,error);return [];}
 }
+function isLikelyResidentialListing(item){
+ const title=String(item.title||'').toLowerCase();
+ const snippet=String(item.content||item.raw_content||'').toLowerCase().replace(/<[^>]*>/g,' ');
+ let host='',path='';try{const u=new URL(item.url);host=u.hostname.toLowerCase().replace(/^www\./,'');path=u.pathname.toLowerCase();}catch{return false;}
+ const text=title+' '+snippet.slice(0,5000)+' '+path;
+ const rejectHost=/(^|\.)(mapquest|tripadvisor|yelp|booking\.com|hotels\.com|expedia|agoda|trivago|opentable|zomato|foursquare)\./i;
+ if(rejectHost.test(host))return false;
+ const reject= /\b(hotel|hotels|motel|hostel|guesthouse|guest house|resort|restaurant|cafe|coffee shop|bar|directions|mapquest|tripadvisor|booking\.com|hotel booking|check availability|room rates|accommodation provider|car rental|gas station|grocery|shopping)\b/i;
+ const residential=/\b(house|houses|home|homes|apartment|apartments|flat|flats|condo|condominium|townhouse|bungalow|villa|duplex|penthouse|residential property|real estate|property)\b/i.test(text);
+ const transaction=/\b(for sale|for rent|to rent|to buy|buying|renting|sale price|asking price|property listing|residential listing|estate agent|real estate agent|property portal|properties for sale|properties to rent|houses for sale|flats to rent)\b/i.test(text);
+ const numericDetail=/\b\d+\s*(?:bed(?:room)?s?|bath(?:room)?s?)\b|(?:£|\$|€|₦)\s?\d|\b(?:USD|GBP|EUR|NGN)\s?\d/i.test(text);
+ if(reject.test(title+' '+path))return false;
+ if(!residential)return false;
+ if(!transaction&&!numericDetail)return false;
+ if(/\b(availability|directions|photos image \d+|terms of use|privacy policy|do not sell|advertisement)\b/i.test(title+' '+snippet.slice(0,700))&&!transaction)return false;
+ return true;
+}
 async function externalPropertySearch(env,query,criteria){
  if(!env.TAVILY_API_KEY)throw new Error("Global property search is not configured yet.");
  const location=[criteria.city,criteria.state,criteria.country].filter(Boolean).join(", ");
- const intent=criteria.purpose==="rent"?"property for rent rental listing":"property for sale real estate listing";
- const searchQuery=[query,intent,location,"actual property listing asking price property photographs"].filter(Boolean).join(" ").slice(0,900);
- const response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,query:searchQuery,topic:"general",search_depth:"basic",max_results:8,include_answer:false,include_raw_content:true})});
+ const intent=criteria.purpose==="rent"?"residential property homes apartments flats houses for rent estate agent listing":"residential property homes apartments flats houses for sale estate agent listing";
+ const searchQuery=[query,intent,location,"individual residential property listing price bedrooms estate agency property portal"].filter(Boolean).join(" ").slice(0,900);
+ const response=await fetch("https://api.tavily.com/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:env.TAVILY_API_KEY,query:searchQuery,topic:"general",search_depth:"advanced",max_results:15,include_answer:false,include_raw_content:false,exclude_domains:["mapquest.com","tripadvisor.com","yelp.com","booking.com","hotels.com","expedia.com","agoda.com","trivago.com","opentable.com","zomato.com"]})});
  const payload=await response.json().catch(()=>({}));
  if(!response.ok)throw new Error(response.status===401||response.status===403?"The global search key was rejected. Check the Tavily secret in Cloudflare.":"The global property search provider is temporarily unavailable.");
- const results=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string").slice(0,8).map(x=>{
-  const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=cleanExternalSnippet(x.content||raw);let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
-  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
+ const candidates=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string"&&isLikelyResidentialListing(x));
+ const results=candidates.slice(0,8).map(x=>{
+  const snippet=cleanExternalSnippet(x.content||"");let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
+  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"};
  });
  await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property structured data or single Open Graph fallback":"unavailable";}));
  const max=Number(criteria.max_price),currency=String(criteria.currency||"").toUpperCase();
