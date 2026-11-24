@@ -48,15 +48,16 @@ async function listingPageImages(pageUrl){
   const page=new URL(pageUrl);if(page.protocol!=="https:")return [];
   const response=await fetch(page.href,{headers:{"Accept":"text/html,application/xhtml+xml","User-Agent":"Mozilla/5.0 (compatible; AgentCoPilotPropertyBot/1.0)"},redirect:"follow",signal:AbortSignal.timeout(7000)});
   const type=response.headers.get("content-type")||"";if(!response.ok||!type.toLowerCase().includes("html"))return [];
-  const html=(await response.text()).slice(0,1500000),found=[];
-  const add=value=>{if(typeof value!=="string")return;let u=value.trim().replace(/&amp;/gi,"&").replace(/&#38;/gi,"&");if(!u)return;try{const parsed=new URL(u,page.href);if(parsed.protocol==="https:"&&!found.includes(parsed.href))found.push(parsed.href);}catch{}};
+  const html=(await response.text()).slice(0,1500000),structured=[],og=[];
+  const add=(target,value)=>{if(typeof value!=="string")return;let u=value.trim().replace(/&amp;/gi,"&").replace(/&#38;/gi,"&");if(!u)return;try{const parsed=new URL(u,page.href),path=parsed.pathname.toLowerCase();if(parsed.protocol!=="https:"||target.includes(parsed.href)||/(?:logo|icon|avatar|favicon|banner|sprite|badge|floor.?plan|map|brochure|watermark|placeholder|no.?image)/i.test(path))return;target.push(parsed.href);}catch{}};
   const attr=(tag,name)=>{const m=tag.match(new RegExp(name+"=[\\x22\\x27]([^\\x22\\x27]+)","i"));return m?m[1]:"";};
-  for(const tag of html.match(/<meta[^>]*>/gi)||[]){const key=(attr(tag,"property")||attr(tag,"name")).toLowerCase();if(key==="og:image"||key==="og:image:url"||key==="twitter:image"||key==="twitter:image:src")add(attr(tag,"content"));}
   for(const block of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)){
-   try{const root=JSON.parse(block[1].replace(/^\s*<!--|-->\s*$/g,""));const visit=(node,depth=0)=>{if(!node||depth>12)return;if(Array.isArray(node)){node.slice(0,80).forEach(x=>visit(x,depth+1));return;}if(typeof node!=="object")return;const types=(Array.isArray(node["@type"])?node["@type"]:[node["@type"]]).filter(Boolean).map(x=>String(x).toLowerCase());const propertyTypes=["house","apartment","residence","singlefamilyresidence","accommodation","realestatelisting"];if(types.some(t=>propertyTypes.includes(t))){const imgs=Array.isArray(node.image)?node.image:[node.image];for(const im of imgs){if(typeof im==="string")add(im);else if(im&&typeof im==="object")add(im.url||im.contentUrl);}}for(const [key,value] of Object.entries(node)){if(key!=="image"&&key!=="logo")visit(value,depth+1);}};visit(root);
+   try{const root=JSON.parse(block[1].replace(/^\s*<!--|-->\s*$/g,""));const visit=(node,depth=0)=>{if(!node||depth>12)return;if(Array.isArray(node)){node.slice(0,80).forEach(x=>visit(x,depth+1));return;}if(typeof node!=="object")return;const types=(Array.isArray(node["@type"])?node["@type"]:[node["@type"]]).filter(Boolean).map(x=>String(x).toLowerCase());const propertyTypes=["house","apartment","residence","singlefamilyresidence","accommodation","realestatelisting"];if(types.some(t=>propertyTypes.includes(t))){const imgs=Array.isArray(node.image)?node.image:[node.image];for(const im of imgs){if(typeof im==="string")add(structured,im);else if(im&&typeof im==="object")add(structured,im.url||im.contentUrl);}}for(const [key,value] of Object.entries(node)){if(key!=="image"&&key!=="logo")visit(value,depth+1);}};visit(root);
    }catch{}
   }
-  return found.slice(0,4);
+  for(const tag of html.match(/<meta[^>]*>/gi)||[]){const key=(attr(tag,"property")||attr(tag,"name")).toLowerCase();if(key==="og:image"||key==="og:image:url"||key==="twitter:image"||key==="twitter:image:src")add(og,attr(tag,"content"));}
+  // Prefer a property's structured image gallery. Use only one Open Graph fallback when no property images are declared.
+  return (structured.length?structured:og).slice(0,6);
  }catch(error){console.warn("Could not verify listing-page image metadata",pageUrl,error);return [];}
 }
 async function externalPropertySearch(env,query,criteria){
@@ -71,7 +72,7 @@ async function externalPropertySearch(env,query,criteria){
   const raw=typeof x.raw_content==="string"?x.raw_content:"";const snippet=clean(x.content||raw,900);let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
   return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External listing — verify availability and details with the original advertiser"};
  });
- await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Source-page metadata (Open Graph or property structured data)":"unavailable";}));
+ await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property structured data or single Open Graph fallback":"unavailable";}));
  const max=Number(criteria.max_price),currency=String(criteria.currency||"").toUpperCase();
  const symbol=currency==="GBP"?"£":currency==="USD"?"\\$":currency==="EUR"?"€":currency==="NGN"?"₦":null;
  for(const item of results){item.budget_status="not_verified";item.criteria_currency=currency||null;if(!Number.isFinite(max)||max<=0||!symbol)continue;const text=item.title+" "+item.snippet;const matches=[...text.matchAll(new RegExp(symbol+"\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)","g"))].map(m=>Number(m[1].replace(/,/g,""))).filter(Number.isFinite);if(matches.length===1){item.listing_price=matches[0];item.budget_status=matches[0]>max?"over_budget":"within_budget";}}

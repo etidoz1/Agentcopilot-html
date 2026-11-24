@@ -27,6 +27,11 @@ function render(rows,external=[]){
   return '<article class="property-card">'+gallery+'<div class="property-body"><span class="chip">External listing · '+esc(p.source||"Web source")+'</span>'+budgetNote+'<h3>'+esc(p.title)+'</h3><p>'+esc(p.snippet||"Open the original source for listing details.")+'</p><p class="muted">'+esc(p.listing_status||"Details and availability have not been independently verified.")+'</p><div class="contact"><a href="'+esc(p.url)+'" target="_blank" rel="noopener">View original listing ↗</a></div></div></article>';
  }).join("");
  host.innerHTML=internal+outside;
+  host.querySelectorAll(".external-gallery img").forEach(img=>{
+   const reject=()=>{const path=(img.currentSrc||img.src||"").split("?")[0].toLowerCase();const ratio=img.naturalWidth/(img.naturalHeight||1);if(/(?:logo|icon|avatar|favicon|banner|sprite|badge|floor.?plan|map|brochure|watermark|placeholder|no.?image)/.test(path)||!img.naturalWidth||!img.naturalHeight||img.naturalWidth<320||img.naturalHeight<200||ratio>2.35||ratio<0.55){const link=img.closest("a");if(link)link.remove();}};
+   img.addEventListener("load",reject,{once:true});img.addEventListener("error",()=>{const link=img.closest("a");if(link)link.remove();},{once:true});if(img.complete)reject();
+  });
+  host.querySelectorAll(".external-gallery").forEach(gallery=>{if(!gallery.querySelector("img")){const card=gallery.closest(".property-card"),body=card&&card.querySelector(".property-body");gallery.remove();if(body)body.insertAdjacentHTML("afterbegin",'<div class="empty">No suitable property photographs could be confirmed. Open the original listing to view its photos.</div>');}});
 }
 $("search-form").addEventListener("submit",async e=>{
  e.preventDefault();hide("search-notice");const btn=$("search-btn");btn.disabled=true;btn.textContent="AI agents are searching…";
