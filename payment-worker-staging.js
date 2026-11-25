@@ -1,4 +1,6 @@
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
+let paymentFxCache = new Map();
+let paymentFxSchemaReady = false;
 function json(data,status=200,headers={}){return new Response(JSON.stringify(data),{status,headers:Object.assign({"Content-Type":"application/json; charset=utf-8"},headers)});}
 function clean(v,n=500){return typeof v==="string"?v.trim().slice(0,n):"";}
 function cleanExternalSnippet(value){
@@ -37,10 +39,37 @@ async function paymentTables(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_settings (id INTEGER PRIMARY KEY CHECK(id=1), provider TEXT NOT NULL, mode TEXT NOT NULL, public_key TEXT NOT NULL, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_pricing (id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL, viewing_fee_mode TEXT NOT NULL, viewing_fee_amount REAL NOT NULL DEFAULT 0, deposit_mode TEXT NOT NULL, deposit_amount REAL NOT NULL DEFAULT 0, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS bookings (id TEXT PRIMARY KEY, property_id TEXT NOT NULL, buyer_uid TEXT NOT NULL, seller_uid TEXT NOT NULL, booking_type TEXT NOT NULL, requested_for TEXT, payment_reference TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
- await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_transactions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, provider TEXT NOT NULL, mode TEXT NOT NULL, payment_type TEXT NOT NULL, booking_id TEXT NOT NULL, property_id TEXT NOT NULL, buyer_uid TEXT NOT NULL, seller_uid TEXT NOT NULL, amount REAL NOT NULL, amount_minor INTEGER NOT NULL, currency TEXT NOT NULL, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, provider_transaction_id TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, verified_at TEXT)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_transactions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, provider TEXT NOT NULL, mode TEXT NOT NULL, payment_type TEXT NOT NULL, booking_id TEXT NOT NULL, property_id TEXT NOT NULL, buyer_uid TEXT NOT NULL, seller_uid TEXT NOT NULL, amount REAL NOT NULL, amount_minor INTEGER NOT NULL, currency TEXT NOT NULL, base_amount REAL, base_currency TEXT, fx_rate REAL, fx_rate_date TEXT, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, provider_transaction_id TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, verified_at TEXT)").run();
+ if(!paymentFxSchemaReady){
+  const info=await env.DB.prepare("PRAGMA table_info(payment_transactions)").all();
+  const columns=new Set((info.results||[]).map(column=>column.name));
+  for(const [name,type] of [["base_amount","REAL"],["base_currency","TEXT"],["fx_rate","REAL"],["fx_rate_date","TEXT"]]){
+   if(!columns.has(name)){
+    try{await env.DB.prepare("ALTER TABLE payment_transactions ADD COLUMN "+name+" "+type).run();}
+    catch(error){if(!String(error?.message||error).toLowerCase().includes("duplicate column"))throw error;}
+   }
+  }
+  paymentFxSchemaReady=true;
+ }
 }
 async function paymentPricingTable(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_pricing (id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL, viewing_fee_mode TEXT NOT NULL, viewing_fee_amount REAL NOT NULL DEFAULT 0, deposit_mode TEXT NOT NULL, deposit_amount REAL NOT NULL DEFAULT 0, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+}
+async function paymentExchangeRate(fromCurrency,toCurrency){
+ const from=String(fromCurrency||"").toUpperCase(),to=String(toCurrency||"").toUpperCase();
+ if(!/^[A-Z]{3}$/.test(from)||!/^[A-Z]{3}$/.test(to))throw new Error("The listing or fee currency is invalid.");
+ if(from===to)return {rate:1,date:new Date().toISOString().slice(0,10),source:"same_currency"};
+ const cacheKey=from+":"+to,cached=paymentFxCache.get(cacheKey);
+ if(cached&&Date.now()-cached.fetchedAt<6*60*60*1000)return cached.value;
+ const url="https://api.frankfurter.dev/v2/rates?base="+encodeURIComponent(from)+"&quotes="+encodeURIComponent(to);
+ const response=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+ if(!response.ok)throw new Error("The exchange-rate service is temporarily unavailable. Please try again shortly.");
+ const rows=await response.json().catch(()=>[]),row=Array.isArray(rows)?rows.find(item=>String(item.base).toUpperCase()===from&&String(item.quote).toUpperCase()===to):null;
+ const rate=Number(row?.rate),date=String(row?.date||"");
+ if(!Number.isFinite(rate)||rate<=0||!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error("A valid exchange rate for "+from+" to "+to+" is not currently available.");
+ const ageDays=(Date.now()-Date.parse(date+"T23:59:59Z"))/86400000;
+ if(!Number.isFinite(ageDays)||ageDays>3||ageDays< -1)throw new Error("The latest exchange rate is too old to use safely. Please try again later.");
+ const value={rate,date,source:"Frankfurter reference rates"};paymentFxCache.set(cacheKey,{value,fetchedAt:Date.now()});return value;
 }
 function paymentCryptoKey(env){
  const raw=String(env.PAYMENT_ENCRYPTION_KEY||"");if(!raw)throw new Error("Payment encryption is not configured on this deployment.");
@@ -95,24 +124,32 @@ async function createPaymentCheckout(env,user,b,headers){
   }
  }
  if(!property)return json({error:"This AgentCoPilot listing could not be verified as currently published. Refresh the marketplace and try again."},404,headers);if(property.seller_uid===user.uid)return json({error:"You cannot pay to view or reserve your own listing."},400,headers);
- const pricing=await env.DB.prepare("SELECT * FROM payment_pricing WHERE id=1").first();if(!pricing)return json({error:"The owner has not configured viewing fees and booking deposits."},409,headers);if(String(property.currency).toUpperCase()!==pricing.currency)return json({error:"This listing uses "+property.currency+" but the owner accepts "+pricing.currency+". Payments are not available for this listing until its currency matches; no automatic conversion is applied."},409,headers);
- let amount=0;if(paymentType==="viewing_fee"){if(pricing.viewing_fee_mode==="fixed")amount=Number(pricing.viewing_fee_amount);else amount=0;}else{if(pricing.deposit_mode==="fixed")amount=Number(pricing.deposit_amount);else if(pricing.deposit_mode==="percentage")amount=Number(property.price)*Number(pricing.deposit_amount)/100;else amount=0;}
- const digits=currencyDigits(pricing.currency),factor=Math.pow(10,digits);amount=Math.round(amount*factor)/factor;const bookingId=crypto.randomUUID(),now=new Date().toISOString(),requestedFor=clean(b.requested_for,100);
+ const pricing=await env.DB.prepare("SELECT * FROM payment_pricing WHERE id=1").first();if(!pricing)return json({error:"The owner has not configured viewing fees and booking deposits."},409,headers);
+ const chargeCurrency=String(property.currency||pricing.currency).toUpperCase();if(!/^[A-Z]{3}$/.test(chargeCurrency))return json({error:"This listing has an invalid payment currency. Please contact support."},409,headers);
+ let baseAmount=0,baseCurrency=String(pricing.currency||"USD").toUpperCase(),fxRate=1,fxRateDate=new Date().toISOString().slice(0,10),fxSource="same_currency";
+ if(paymentType==="viewing_fee"){if(pricing.viewing_fee_mode==="fixed")baseAmount=Number(pricing.viewing_fee_amount);}
+ else if(pricing.deposit_mode==="fixed")baseAmount=Number(pricing.deposit_amount);
+ else if(pricing.deposit_mode==="percentage"){baseAmount=Number(property.price)*Number(pricing.deposit_amount)/100;baseCurrency=chargeCurrency;}
+ if(!Number.isFinite(baseAmount)||baseAmount<0)return json({error:"The configured payment amount is invalid."},409,headers);
+ if(baseAmount>0&&baseCurrency!==chargeCurrency){const fx=await paymentExchangeRate(baseCurrency,chargeCurrency);fxRate=fx.rate;fxRateDate=fx.date;fxSource=fx.source;}
+ const digits=currencyDigits(chargeCurrency),factor=Math.pow(10,digits);let amount=Math.round(baseAmount*fxRate*factor)/factor;
+ if(!Number.isFinite(amount))return json({error:"The converted payment amount is invalid."},400,headers);
+ const bookingId=crypto.randomUUID(),now=new Date().toISOString(),requestedFor=clean(b.requested_for,100);
  if(amount<=0){await env.DB.prepare("INSERT INTO bookings (id,property_id,buyer_uid,seller_uid,booking_type,requested_for,payment_reference,status,created_at,updated_at) VALUES (?,?,?,?,?,?,NULL,'requested',?,?)").bind(bookingId,property.id,user.uid,property.seller_uid,paymentType,requestedFor,now,now).run();try{await notify(env,property.seller_uid,"viewing_request","New property request","A customer requested "+(paymentType==="viewing_fee"?"a viewing":"a booking")+" for "+property.title,"./leads.html");}catch(e){}return json({success:true,free:true,booking_id:bookingId,message:"Your request was sent. The seller will contact you to confirm the details."},201,headers);}
  const settings=await env.DB.prepare("SELECT provider,mode,public_key,secret_cipher,webhook_cipher FROM payment_settings WHERE id=1").first();if(!settings)return json({error:"The owner has not connected a payment provider."},409,headers);if(!env.PAYMENT_ENCRYPTION_KEY)return json({error:"Secure payment credential storage is not configured."},503,headers);
- const reference="ACP-"+crypto.randomUUID().replace(/-/g,"").toUpperCase(),minor=amountMinor(amount,pricing.currency);if(!Number.isSafeInteger(minor)||minor<=0)return json({error:"The calculated payment amount is invalid."},400,headers);
+ const reference="ACP-"+crypto.randomUUID().replace(/-/g,"").toUpperCase(),minor=amountMinor(amount,chargeCurrency);if(!Number.isSafeInteger(minor)||minor<=0)return json({error:"The calculated payment amount is invalid."},400,headers);
  await env.DB.prepare("INSERT INTO bookings (id,property_id,buyer_uid,seller_uid,booking_type,requested_for,payment_reference,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'awaiting_payment',?,?)").bind(bookingId,property.id,user.uid,property.seller_uid,paymentType,requestedFor,reference,now,now).run();
- await env.DB.prepare("INSERT INTO payment_transactions (id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,amount_minor,currency,secret_cipher,webhook_cipher,provider_transaction_id,status,created_at,updated_at,verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,'pending',?,?,NULL)").bind(crypto.randomUUID(),reference,settings.provider,settings.mode,paymentType,bookingId,property.id,user.uid,property.seller_uid,amount,minor,pricing.currency,settings.secret_cipher,settings.webhook_cipher,now,now).run();
+ await env.DB.prepare("INSERT INTO payment_transactions (id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,amount_minor,currency,base_amount,base_currency,fx_rate,fx_rate_date,secret_cipher,webhook_cipher,provider_transaction_id,status,created_at,updated_at,verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,'pending',?,?,NULL)").bind(crypto.randomUUID(),reference,settings.provider,settings.mode,paymentType,bookingId,property.id,user.uid,property.seller_uid,amount,minor,chargeCurrency,baseAmount,baseCurrency,fxRate,fxRateDate,settings.secret_cipher,settings.webhook_cipher,now,now).run();
  const returnUrl=env.PAYMENT_RETURN_URL||"https://etidoz1.github.io/Agentcopilot-html/payment-result.html";let checkoutUrl="";
  try{
  const secret=await decryptPaymentSecret(settings.secret_cipher,env);
  if(settings.provider==="paystack"){
-  const response=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({email:user.email,amount:String(minor),currency:pricing.currency,reference,callback_url:returnUrl,metadata:{booking_id:bookingId,property_id:property.id,payment_type:paymentType}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!==true||!payload.data?.authorization_url)throw new Error("Paystack could not create a checkout session.");checkoutUrl=payload.data.authorization_url;
+  const response=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({email:user.email,amount:String(minor),currency:chargeCurrency,reference,callback_url:returnUrl,metadata:{booking_id:bookingId,property_id:property.id,payment_type:paymentType}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!==true||!payload.data?.authorization_url)throw new Error("Paystack could not create a checkout session.");checkoutUrl=payload.data.authorization_url;
  }else{
-  const response=await fetch("https://api.flutterwave.com/v3/payments",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({tx_ref:reference,amount,currency:pricing.currency,redirect_url:returnUrl,customer:{email:user.email},meta:{booking_id:bookingId,property_id:property.id,payment_type:paymentType},customizations:{title:"AgentCoPilot property payment",description:paymentType==="viewing_fee"?"Property viewing fee":"Property booking deposit"}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!=="success"||!payload.data?.link)throw new Error("Flutterwave could not create a checkout session.");checkoutUrl=payload.data.link;
+  const response=await fetch("https://api.flutterwave.com/v3/payments",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({tx_ref:reference,amount,currency:chargeCurrency,redirect_url:returnUrl,customer:{email:user.email},meta:{booking_id:bookingId,property_id:property.id,payment_type:paymentType},customizations:{title:"AgentCoPilot property payment",description:paymentType==="viewing_fee"?"Property viewing fee":"Property booking deposit"}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!=="success"||!payload.data?.link)throw new Error("Flutterwave could not create a checkout session.");checkoutUrl=payload.data.link;
  }
  }catch(error){const failedAt=new Date().toISOString();await env.DB.prepare("UPDATE payment_transactions SET status='checkout_failed',updated_at=? WHERE reference=? AND status='pending'").bind(failedAt,reference).run();await env.DB.prepare("UPDATE bookings SET status='checkout_failed',updated_at=? WHERE id=? AND status='awaiting_payment'").bind(failedAt,bookingId).run();throw error;}
- return json({success:true,checkout_url:checkoutUrl,reference,amount,currency:pricing.currency,payment_type:paymentType},200,headers);
+ return json({success:true,checkout_url:checkoutUrl,reference,amount,currency:chargeCurrency,base_amount:baseAmount,base_currency:baseCurrency,fx_rate:fxRate,fx_rate_date:fxRateDate,fx_source:fxSource,payment_type:paymentType},200,headers);
 }
 
 
