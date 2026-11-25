@@ -155,7 +155,15 @@ async function createPaymentCheckout(env,user,b,headers){
 }
 
 
-async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();}
+async function notify(env,userUid,type,title,message,link=""){
+ const id=crypto.randomUUID(),createdAt=new Date().toISOString();
+ await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(id,userUid,type,title,message,link,createdAt).run();
+ await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();
+ if(env.PROPERTY_DB){try{
+  await env.PROPERTY_DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(id,userUid,type,title,message,link,createdAt).run();
+  await env.PROPERTY_DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();
+ }catch(e){console.error("Marketplace payment notification mirror failed",e);}}
+}
 
 function filters(params){
  const c=["p.status = 'published'"],v=[];const add=(sql,val)=>{c.push(sql);v.push(val);};
@@ -386,6 +394,17 @@ export default {async fetch(request,env){
     await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
    }
 
+   if(url.pathname==="/api/payments/history"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to view payment history."},401,headers);
+    await paymentTables(env);const admin=await isAdmin(user);
+    const sql="SELECT id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,currency,status,created_at,updated_at,verified_at,base_amount,base_currency,fx_rate,fx_rate_date FROM payment_transactions "+(admin?"":"WHERE seller_uid=? OR buyer_uid=? ")+"ORDER BY created_at DESC LIMIT 100";
+    const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();
+    const propertyDb=env.PROPERTY_DB||env.DB,payments=[];
+    for(const tx of rows.results||[]){let property=null;try{property=await propertyDb.prepare("SELECT title,seller_name FROM properties WHERE id=?").bind(tx.property_id).first();}catch(e){console.warn("Payment property details unavailable",tx.property_id,e);}
+     payments.push({...tx,property_title:property?.title||"Property no longer available",seller_name:property?.seller_name||""});
+    }
+    return json({payments,scope:admin?"all":"own"},200,headers);
+   }
    if(url.pathname==="/api/owner/payment-pricing"&&(request.method==="GET"||request.method==="PUT")){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!(await isAdmin(user)))return json({error:"Only an admin or owner can manage payment pricing."},403,headers);await paymentPricingTable(env);
     if(request.method==="GET"){const row=await env.DB.prepare("SELECT currency,viewing_fee_mode,viewing_fee_amount,deposit_mode,deposit_amount,updated_at FROM payment_pricing WHERE id=1").first();return json({pricing:row||{currency:"NGN",viewing_fee_mode:"free",viewing_fee_amount:0,deposit_mode:"off",deposit_amount:0}},200,headers);}
