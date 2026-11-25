@@ -32,8 +32,9 @@ The Worker uses AES-256-GCM to encrypt provider secret keys and webhook signing 
 - Configure the Worker variable `PAYMENT_RETURN_URL` to the deployed `payment-result.html` URL. The development fallback is `https://etidoz1.github.io/Agentcopilot-html/payment-result.html`; change it for another deployment/domain.
 - Set the Paystack webhook URL to `https://<your-worker-domain>/api/webhooks/paystack`.
 - Set the Flutterwave webhook URL to `https://<your-worker-domain>/api/webhooks/flutterwave` and use the same webhook secret hash entered in Payment Settings.
+  Flutterwave sends that exact value in the `verif-hash` request header; the Worker compares it directly, then independently verifies the transaction with Flutterwave. It does not calculate an HMAC of the webhook body.
 - Checkout is initiated by the Worker. Paystack and Flutterwave secret keys never reach the browser. Each pending transaction stores encrypted snapshots of the provider secrets so a credential rotation does not break verification of an already-started payment.
-- The return page does not trust the provider redirect parameters. It asks the Worker to verify the transaction with the provider before marking it successful.
+- The return page does not trust the provider redirect parameters. It asks the Worker to verify the transaction with the provider before marking it successful. Webhook notifications are only hints: the Worker re-verifies provider transaction ID/reference, successful status, amount, and currency against the stored transaction before marking it paid.
 - Payment success is idempotent: repeated webhook deliveries do not repeat the success update or notifications.
 - Payments settle to the merchant account connected by the deployment owner. This integration is not escrow and does not hold or distribute funds to property sellers.
 
@@ -43,3 +44,10 @@ The Worker uses AES-256-GCM to encrypt provider secret keys and webhook signing 
 - Secret values are write-only in the UI and encrypted in D1 using the Worker secret.
 - Never store secret keys in HTML, JavaScript, Git, browser storage, or logs.
 - A redirect to the app is not proof of payment. Future fulfillment must rely on server-side provider verification and validated webhooks.
+
+## Required sandbox test checklist before live mode
+
+- Paystack: successful checkout, cancelled checkout, failed checkout, valid signed webhook, invalid signature, stale timestamp for `Paystack-Signature`, legacy `x-paystack-signature` only when the provider still sends it, and repeated webhook delivery.
+- Flutterwave: successful checkout, cancelled checkout, failed checkout, correct `verif-hash`, missing or incorrect `verif-hash`, invalid transaction ID, wrong reference, wrong amount, wrong currency, and repeated webhook delivery.
+- For both providers, confirm buyer and seller are notified once only, booking moves to `paid` only after provider-side verification, and a browser redirect alone never marks payment successful.
+- Test with sandbox credentials and test funds only. Do not enable live keys until every case passes.
