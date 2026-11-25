@@ -76,7 +76,24 @@ async function verifyPaymentRecord(env,tx,providerTransactionId){
 }
 async function createPaymentCheckout(env,user,b,headers){
  await paymentTables(env);const propertyId=clean(b.property_id,80),paymentType=clean(b.payment_type,30).toLowerCase();if(!propertyId||!["viewing_fee","booking_deposit"].includes(paymentType))return json({error:"Choose a valid property and payment type."},400,headers);
- let property=await env.DB.prepare("SELECT id,seller_uid,title,price,currency,status FROM properties WHERE id=? AND status='published'").bind(propertyId).first();if(!property){const liveResponse=await fetch("https://agentcopilot-html.miaj66355.workers.dev/api/properties/"+encodeURIComponent(propertyId),{headers:{Accept:"application/json"}});const liveData=await liveResponse.json().catch(()=>({}));if(liveResponse.ok&&liveData.property&&liveData.property.status==="published")property=liveData.property;}if(!property)return json({error:"This AgentCoPilot listing is no longer available."},404,headers);if(property.seller_uid===user.uid)return json({error:"You cannot pay to view or reserve your own listing."},400,headers);
+ let property=await env.DB.prepare("SELECT id,seller_uid,title,price,currency,status FROM properties WHERE id=? AND status='published'").bind(propertyId).first();
+ if(!property){
+  const marketplace="https://agentcopilot-html.miaj66355.workers.dev";
+  try{
+   const liveResponse=await fetch(marketplace+"/api/properties/"+encodeURIComponent(propertyId),{headers:{Accept:"application/json"}});
+   const liveData=await liveResponse.json().catch(()=>({}));
+   if(liveResponse.ok&&liveData.property&&String(liveData.property.status||"").toLowerCase()==="published"&&String(liveData.property.id)===propertyId)property=liveData.property;
+  }catch(error){console.error("Direct marketplace property lookup failed",error);}
+  if(!property){
+   try{
+    const listResponse=await fetch(marketplace+"/api/properties?limit=40",{headers:{Accept:"application/json"}});
+    const listData=await listResponse.json().catch(()=>({}));
+    const match=Array.isArray(listData.properties)?listData.properties.find(item=>String(item.id)===propertyId&&String(item.status||"").toLowerCase()==="published"):null;
+    if(listResponse.ok&&match)property=match;
+   }catch(error){console.error("Marketplace listing-feed fallback failed",error);}
+  }
+ }
+ if(!property)return json({error:"This AgentCoPilot listing could not be verified as currently published. Refresh the marketplace and try again."},404,headers);if(property.seller_uid===user.uid)return json({error:"You cannot pay to view or reserve your own listing."},400,headers);
  const pricing=await env.DB.prepare("SELECT * FROM payment_pricing WHERE id=1").first();if(!pricing)return json({error:"The owner has not configured viewing fees and booking deposits."},409,headers);if(String(property.currency).toUpperCase()!==pricing.currency)return json({error:"This listing uses "+property.currency+" but the owner accepts "+pricing.currency+". Payments are not available for this listing until its currency matches; no automatic conversion is applied."},409,headers);
  let amount=0;if(paymentType==="viewing_fee"){if(pricing.viewing_fee_mode==="fixed")amount=Number(pricing.viewing_fee_amount);else amount=0;}else{if(pricing.deposit_mode==="fixed")amount=Number(pricing.deposit_amount);else if(pricing.deposit_mode==="percentage")amount=Number(property.price)*Number(pricing.deposit_amount)/100;else amount=0;}
  const digits=currencyDigits(pricing.currency),factor=Math.pow(10,digits);amount=Math.round(amount*factor)/factor;const bookingId=crypto.randomUUID(),now=new Date().toISOString(),requestedFor=clean(b.requested_for,100);
