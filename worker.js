@@ -33,7 +33,7 @@ async function userRole(user){
  try{const r=await fetch(url,{headers:{Authorization:"Bearer "+user.token}});if(!r.ok)return "user";const d=await r.json();return String(d.fields?.role?.stringValue||"user").toLowerCase();}catch{return "user";}
 }
 async function isAdmin(user){const role=await userRole(user);return role==="admin"||role==="owner";}
-async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();}
+async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();}
 
 function filters(params){
  const c=["p.status = 'published'"],v=[];const add=(sql,val)=>{c.push(sql);v.push(val);};
@@ -192,7 +192,8 @@ export default {async fetch(request,env){
 
    if(url.pathname==="/api/notifications"&&request.method==="GET"){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
-    const rows=await env.DB.prepare("SELECT id,type,title,message,link,read_at,created_at FROM notifications WHERE user_uid=? ORDER BY created_at DESC LIMIT 30").bind(user.uid).all();
+    await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(user.uid,user.uid).run();
+    const rows=await env.DB.prepare("SELECT id,type,title,message,link,read_at,created_at FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5").bind(user.uid).all();
     return json({notifications:rows.results||[],unread:(rows.results||[]).filter(x=>!x.read_at).length},200,headers);
    }
    if(url.pathname.startsWith("/api/notifications/")&&request.method==="PATCH"){
