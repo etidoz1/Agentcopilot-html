@@ -76,7 +76,8 @@ async function verifyPaymentRecord(env,tx,providerTransactionId){
 }
 async function createPaymentCheckout(env,user,b,headers){
  await paymentTables(env);const propertyId=clean(b.property_id,80),paymentType=clean(b.payment_type,30).toLowerCase();if(!propertyId||!["viewing_fee","booking_deposit"].includes(paymentType))return json({error:"Choose a valid property and payment type."},400,headers);
- let property=await env.DB.prepare("SELECT id,seller_uid,title,price,currency,status FROM properties WHERE id=? AND status='published'").bind(propertyId).first();
+  const propertyDb=env.PROPERTY_DB||env.DB;
+ let property=await propertyDb.prepare("SELECT id,seller_uid,title,price,currency,status FROM properties WHERE id=? AND status='published'").bind(propertyId).first();
  if(!property){
   const marketplace="https://agentcopilot-html.miaj66355.workers.dev";
   try{
