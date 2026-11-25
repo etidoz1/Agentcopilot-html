@@ -2,7 +2,7 @@
 
 ## Current implementation stage
 
-This branch adds an owner-only Payment Settings screen and server-side encrypted storage for Paystack or Flutterwave credentials. It does not yet enable customer checkout or mark any viewing fee/booking deposit as paid. Those flows require server-calculated charges, transaction verification, signed webhook handling, and the final fee/deposit rules.
+This branch adds an owner-only Payment Settings screen, encrypted storage for Paystack or Flutterwave credentials, and owner-configurable viewing-fee and booking-deposit rules. Customer checkout is not enabled yet; no transaction can be initiated or marked paid at this stage. Checkout still requires server-calculated charges, transaction records, provider verification, signed webhook handling, and a real sandbox test.
 
 ## Required deployment secret
 
@@ -17,6 +17,15 @@ The Worker uses AES-256-GCM to encrypt provider secret keys and webhook signing 
 3. Sign in to AgentCoPilot using the Firestore account whose `users/{uid}.role` is `owner`.
 4. Open **Payment Settings**, choose the provider and test mode, and enter the provider public key, secret key, and webhook signing secret/hash.
 5. Do not switch to live mode until checkout and webhook tests pass and the provider has approved the merchant account.
+
+## Owner pricing controls
+
+- Select one deployment payment currency (for example NGN, USD, GBP, or EUR).
+- Viewing fee: free or a fixed amount in the selected currency.
+- Booking deposit: disabled, a fixed amount in the selected currency, or a percentage from greater than 0 up to 100 of the listed property price.
+- The Worker validates and stores these settings. The customer-facing checkout must calculate the amount on the server, not trust an amount submitted by the browser.
+- Until multi-currency conversion is explicitly implemented, checkout must reject listings whose currency does not match the owner's configured payment currency. No automatic exchange-rate conversion is assumed.
+- These settings are for AgentCoPilot-managed listings only. External property search results must never be charged through the deployment owner's merchant account.
 
 ## Security
 

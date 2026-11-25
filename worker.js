@@ -36,6 +36,9 @@ async function isAdmin(user){const role=await userRole(user);return role==="admi
 async function paymentTables(env){
  await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_settings (id INTEGER PRIMARY KEY CHECK(id=1), provider TEXT NOT NULL, mode TEXT NOT NULL, public_key TEXT NOT NULL, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
 }
+async function paymentPricingTable(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_pricing (id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL, viewing_fee_mode TEXT NOT NULL, viewing_fee_amount REAL NOT NULL DEFAULT 0, deposit_mode TEXT NOT NULL, deposit_amount REAL NOT NULL DEFAULT 0, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+}
 function paymentCryptoKey(env){
  const raw=String(env.PAYMENT_ENCRYPTION_KEY||"");if(!raw)throw new Error("Payment encryption is not configured on this deployment.");
  let bytes;try{const clean=raw.replace(/-/g,"+").replace(/_/g,"/");const bin=atob(clean+"=".repeat((4-clean.length%4)%4));bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));}catch{throw new Error("Payment encryption key is invalid. Configure a base64-encoded 32-byte key.");}
@@ -256,12 +259,26 @@ export default {async fetch(request,env){
     await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
    }
 
+   if(url.pathname==="/api/owner/payment-pricing"&&(request.method==="GET"||request.method==="PUT")){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(await userRole(user)!=="owner")return json({error:"Only the application owner can manage payment pricing."},403,headers);await paymentPricingTable(env);
+    if(request.method==="GET"){const row=await env.DB.prepare("SELECT currency,viewing_fee_mode,viewing_fee_amount,deposit_mode,deposit_amount,updated_at FROM payment_pricing WHERE id=1").first();return json({pricing:row||{currency:"NGN",viewing_fee_mode:"free",viewing_fee_amount:0,deposit_mode:"off",deposit_amount:0}},200,headers);}
+    const b=await request.json(),currency=clean(b.currency,3).toUpperCase(),viewMode=clean(b.viewing_fee_mode,10).toLowerCase(),depositMode=clean(b.deposit_mode,12).toLowerCase(),viewAmount=Number(b.viewing_fee_amount),depositAmount=Number(b.deposit_amount);
+    if(!/^[A-Z]{3}$/.test(currency)||!["free","fixed"].includes(viewMode)||!["off","fixed","percentage"].includes(depositMode)||!Number.isFinite(viewAmount)||!Number.isFinite(depositAmount)||viewAmount<0||depositAmount<0||viewAmount>1000000000||depositAmount>1000000000)return json({error:"Enter a valid currency and non-negative fee/deposit values."},400,headers);
+    if(viewMode==="fixed"&&viewAmount<=0)return json({error:"A fixed viewing fee must be greater than zero."},400,headers);
+    if(depositMode==="fixed"&&depositAmount<=0)return json({error:"A fixed booking deposit must be greater than zero."},400,headers);
+    if(depositMode==="percentage"&&(depositAmount<=0||depositAmount>100))return json({error:"The deposit percentage must be greater than 0 and no more than 100."},400,headers);
+    const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_pricing (id,currency,viewing_fee_mode,viewing_fee_amount,deposit_mode,deposit_amount,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET currency=excluded.currency,viewing_fee_mode=excluded.viewing_fee_mode,viewing_fee_amount=excluded.viewing_fee_amount,deposit_mode=excluded.deposit_mode,deposit_amount=excluded.deposit_amount,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(currency,viewMode,viewMode==="fixed"?viewAmount:0,depositMode,depositMode==="off"?0:depositAmount,user.uid,now).run();
+    return json({success:true,message:"Viewing fee and booking deposit rules saved.",pricing:{currency,viewing_fee_mode:viewMode,viewing_fee_amount:viewMode==="fixed"?viewAmount:0,deposit_mode:depositMode,deposit_amount:depositMode==="off"?0:depositAmount},updated_at:now},200,headers);
+   }
    if(url.pathname==="/api/owner/payment-settings"&&(request.method==="GET"||request.method==="PUT")){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(await userRole(user)!=="owner")return json({error:"Only the application owner can manage payment settings."},403,headers);await paymentTables(env);
     if(request.method==="GET"){const row=await env.DB.prepare("SELECT provider,mode,public_key,updated_at FROM payment_settings WHERE id=1").first();return json({configured:!!row,provider:row?.provider||"",mode:row?.mode||"test",public_key:row?.public_key||"",updated_at:row?.updated_at||null,encryption_ready:!!env.PAYMENT_ENCRYPTION_KEY},200,headers);}
-    const b=await request.json(),provider=clean(b.provider,20).toLowerCase(),mode=clean(b.mode,10).toLowerCase(),publicKey=clean(b.public_key,240),secretKey=clean(b.secret_key,500),webhookSecret=clean(b.webhook_secret,500);
-    if(!["paystack","flutterwave"].includes(provider)||!["test","live"].includes(mode)||!publicKey||!secretKey||!webhookSecret)return json({error:"Choose a provider and mode, then enter its public key, secret key, and webhook signing secret/hash."},400,headers);
-    let secretCipher,webhookCipher;try{[secretCipher,webhookCipher]=await Promise.all([encryptPaymentSecret(secretKey,env),encryptPaymentSecret(webhookSecret,env)]);}catch(e){return json({error:e.message},503,headers);}
+    const b=await request.json(),provider=clean(b.provider,20).toLowerCase(),mode=clean(b.mode,10).toLowerCase(),publicKey=typeof b.public_key==="string"?b.public_key.trim().slice(0,240):"",secretKey=typeof b.secret_key==="string"?b.secret_key.trim():"",webhookSecret=typeof b.webhook_secret==="string"?b.webhook_secret.trim():"";
+    if(!["paystack","flutterwave"].includes(provider)||!["test","live"].includes(mode)||!publicKey||publicKey.length>240||secretKey.length>500||webhookSecret.length>500)return json({error:"Choose a provider and mode, and enter a valid public key. New or changed provider credentials must be supplied."},400,headers);
+    const existing=await env.DB.prepare("SELECT provider,mode,public_key,secret_cipher,webhook_cipher FROM payment_settings WHERE id=1").first();
+    const sameConnection=existing&&existing.provider===provider&&existing.mode===mode&&existing.public_key===publicKey;
+    if((!sameConnection||!existing.secret_cipher||!existing.webhook_cipher)&&(!secretKey||!webhookSecret))return json({error:"Enter both secret values when connecting a new provider or switching test/live mode."},400,headers);
+    let secretCipher=existing?.secret_cipher,webhookCipher=existing?.webhook_cipher;try{if(secretKey)secretCipher=await encryptPaymentSecret(secretKey,env);if(webhookSecret)webhookCipher=await encryptPaymentSecret(webhookSecret,env);}catch(e){return json({error:e.message},503,headers);}
     const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_settings (id,provider,mode,public_key,secret_cipher,webhook_cipher,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,mode=excluded.mode,public_key=excluded.public_key,secret_cipher=excluded.secret_cipher,webhook_cipher=excluded.webhook_cipher,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(provider,mode,publicKey,secretCipher,webhookCipher,user.uid,now).run();
     return json({success:true,message:"Payment provider credentials saved securely.",provider,mode,updated_at:now},200,headers);
    }
