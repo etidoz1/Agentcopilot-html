@@ -67,7 +67,7 @@ async function verifyPaymentRecord(env,tx,providerTransactionId){
  const secret=await decryptPaymentSecret(tx.secret_cipher,env);let data=null;
  if(tx.provider==="paystack"){
   const response=await fetch("https://api.paystack.co/transaction/verify/"+encodeURIComponent(tx.reference),{headers:{Authorization:"Bearer "+secret}});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!==true)throw new Error("Paystack could not verify this transaction.");data=payload.data;
-  if(data?.status!=="success"||data.reference!==tx.reference||Number(data.amount)!==Number(tx.amount_minor)||String(data.currency).toUpperCase()!==tx.currency)throw new Error("Paystack verification did not match the expected amount, currency, reference, or status.");
+  if(data?.status!=="success"||data.reference!==tx.reference||Number(data.amount)!==Number(tx.amount_minor)||String(data.currency).toUpperCase()!==tx.currency||String(data.domain).toLowerCase()!==(tx.mode==="test"?"test":"live"))throw new Error("Paystack verification did not match the expected amount, currency, reference, environment, or status.");
  }else{
   if(!providerTransactionId)throw new Error("Flutterwave transaction ID is required for verification.");
   const response=await fetch("https://api.flutterwave.com/v3/transactions/"+encodeURIComponent(providerTransactionId)+"/verify",{headers:{Authorization:"Bearer "+secret}});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!=="success")throw new Error("Flutterwave could not verify this transaction.");data=payload.data;
