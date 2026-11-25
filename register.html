@@ -71,9 +71,9 @@
             const countrySelect = document.getElementById('country');
             const country = countrySelect.value;
             const countryCode = countrySelect.selectedOptions[0]?.dataset.code || "";
-            if (!country || !countryCode) { errorMsg.innerText = "Please select your country."; errorMsg.style.display = "block"; return; }
             const btn = document.getElementById('register-btn');
             const errorMsg = document.getElementById('error-msg');
+            if (!country || !countryCode) { errorMsg.innerText = "Please select your country."; errorMsg.style.display = "block"; return; }
 
             btn.innerText = "Creating...";
             errorMsg.style.display = "none";
