@@ -2,7 +2,7 @@
 
 ## Current implementation stage
 
-This branch adds an owner-only Payment Settings screen, encrypted storage for Paystack or Flutterwave credentials, and owner-configurable viewing-fee and booking-deposit rules. Customer checkout is not enabled yet; no transaction can be initiated or marked paid at this stage. Checkout still requires server-calculated charges, transaction records, provider verification, signed webhook handling, and a real sandbox test.
+This branch now contains owner-only payment settings, encrypted provider credentials, configurable viewing fees and booking deposits, server-calculated checkout, transaction records, server-side provider verification, signed webhook endpoints, and a payment return page. It has passed source syntax checks but has NOT been deployed or tested with real provider sandbox credentials. Do not enable live payments until the complete sandbox and webhook tests pass.
 
 ## Required deployment secret
 
@@ -26,6 +26,16 @@ The Worker uses AES-256-GCM to encrypt provider secret keys and webhook signing 
 - The Worker validates and stores these settings. The customer-facing checkout must calculate the amount on the server, not trust an amount submitted by the browser.
 - Until multi-currency conversion is explicitly implemented, checkout must reject listings whose currency does not match the owner's configured payment currency. No automatic exchange-rate conversion is assumed.
 - These settings are for AgentCoPilot-managed listings only. External property search results must never be charged through the deployment owner's merchant account.
+
+## Checkout and webhook configuration
+
+- Configure the Worker variable `PAYMENT_RETURN_URL` to the deployed `payment-result.html` URL. The development fallback is `https://etidoz1.github.io/Agentcopilot-html/payment-result.html`; change it for another deployment/domain.
+- Set the Paystack webhook URL to `https://<your-worker-domain>/api/webhooks/paystack`.
+- Set the Flutterwave webhook URL to `https://<your-worker-domain>/api/webhooks/flutterwave` and use the same webhook secret hash entered in Payment Settings.
+- Checkout is initiated by the Worker. Paystack and Flutterwave secret keys never reach the browser. Each pending transaction stores encrypted snapshots of the provider secrets so a credential rotation does not break verification of an already-started payment.
+- The return page does not trust the provider redirect parameters. It asks the Worker to verify the transaction with the provider before marking it successful.
+- Payment success is idempotent: repeated webhook deliveries do not repeat the success update or notifications.
+- Payments settle to the merchant account connected by the deployment owner. This integration is not escrow and does not hold or distribute funds to property sellers.
 
 ## Security
 
