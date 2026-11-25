@@ -11,7 +11,7 @@ function cleanExternalSnippet(value){
  return text.slice(0,650);
 }
 function money(v){const n=Number(v);return Number.isFinite(n)&&n>0?n:null;}
-function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PATCH, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
+function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PUT, PATCH, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
 let firebaseCerts=null,firebaseCertExpires=0;
 function b64urlBytes(value){const s=value.replace(/-/g,"+").replace(/_/g,"/");const padded=s+"=".repeat((4-s.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 function derNode(bytes,pos){const tag=bytes[pos++];let length=bytes[pos++];if(length&128){const count=length&127;length=0;for(let i=0;i<count;i++)length=(length<<8)|bytes[pos++];}const start=pos;return {tag,start,next:start+length};}
@@ -33,6 +33,17 @@ async function userRole(user){
  try{const r=await fetch(url,{headers:{Authorization:"Bearer "+user.token}});if(!r.ok)return "user";const d=await r.json();return String(d.fields?.role?.stringValue||"user").toLowerCase();}catch{return "user";}
 }
 async function isAdmin(user){const role=await userRole(user);return role==="admin"||role==="owner";}
+async function paymentTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_settings (id INTEGER PRIMARY KEY CHECK(id=1), provider TEXT NOT NULL, mode TEXT NOT NULL, public_key TEXT NOT NULL, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+}
+function paymentCryptoKey(env){
+ const raw=String(env.PAYMENT_ENCRYPTION_KEY||"");if(!raw)throw new Error("Payment encryption is not configured on this deployment.");
+ let bytes;try{const clean=raw.replace(/-/g,"+").replace(/_/g,"/");const bin=atob(clean+"=".repeat((4-clean.length%4)%4));bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));}catch{throw new Error("Payment encryption key is invalid. Configure a base64-encoded 32-byte key.");}
+ if(bytes.length!==32)throw new Error("Payment encryption key must decode to exactly 32 bytes.");return crypto.subtle.importKey("raw",bytes,{name:"AES-GCM"},false,["encrypt","decrypt"]);
+}
+async function encryptPaymentSecret(value,env){const iv=crypto.getRandomValues(new Uint8Array(12)),key=await paymentCryptoKey(env),cipher=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(value));return btoa(String.fromCharCode(...iv,...new Uint8Array(cipher)));}
+async function decryptPaymentSecret(value,env){const raw=Uint8Array.from(atob(value),c=>c.charCodeAt(0)),iv=raw.slice(0,12),cipher=raw.slice(12),key=await paymentCryptoKey(env),plain=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,cipher);return new TextDecoder().decode(plain);}
+
 async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();}
 
 function filters(params){
@@ -245,6 +256,15 @@ export default {async fetch(request,env){
     await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
    }
 
+   if(url.pathname==="/api/owner/payment-settings"&&(request.method==="GET"||request.method==="PUT")){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(await userRole(user)!=="owner")return json({error:"Only the application owner can manage payment settings."},403,headers);await paymentTables(env);
+    if(request.method==="GET"){const row=await env.DB.prepare("SELECT provider,mode,public_key,updated_at FROM payment_settings WHERE id=1").first();return json({configured:!!row,provider:row?.provider||"",mode:row?.mode||"test",public_key:row?.public_key||"",updated_at:row?.updated_at||null,encryption_ready:!!env.PAYMENT_ENCRYPTION_KEY},200,headers);}
+    const b=await request.json(),provider=clean(b.provider,20).toLowerCase(),mode=clean(b.mode,10).toLowerCase(),publicKey=clean(b.public_key,240),secretKey=clean(b.secret_key,500),webhookSecret=clean(b.webhook_secret,500);
+    if(!["paystack","flutterwave"].includes(provider)||!["test","live"].includes(mode)||!publicKey||!secretKey||!webhookSecret)return json({error:"Choose a provider and mode, then enter its public key, secret key, and webhook signing secret/hash."},400,headers);
+    let secretCipher,webhookCipher;try{[secretCipher,webhookCipher]=await Promise.all([encryptPaymentSecret(secretKey,env),encryptPaymentSecret(webhookSecret,env)]);}catch(e){return json({error:e.message},503,headers);}
+    const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_settings (id,provider,mode,public_key,secret_cipher,webhook_cipher,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,mode=excluded.mode,public_key=excluded.public_key,secret_cipher=excluded.secret_cipher,webhook_cipher=excluded.webhook_cipher,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(provider,mode,publicKey,secretCipher,webhookCipher,user.uid,now).run();
+    return json({success:true,message:"Payment provider credentials saved securely.",provider,mode,updated_at:now},200,headers);
+   }
   if(url.pathname==="/api/generate"&&request.method==="POST"){const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
   return json({error:"Not found."},404,headers);
  }catch(e){console.error("AgentCoPilot API error",e);return json({error:e.message||"The request could not be completed."},500,headers);}
