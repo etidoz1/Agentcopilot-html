@@ -2,6 +2,26 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebas
 import { getAuth, onAuthStateChanged, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
 import { getFirestore, doc, getDoc, updateDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 const firebaseConfig={apiKey:"AIzaSyDDWexZIGRtfkw5unI1jsGzcBS8Ind-dP8",authDomain:"agentcopilot-98817.firebaseapp.com",projectId:"agentcopilot-98817",storageBucket:"agentcopilot-98817.firebasestorage.app",messagingSenderId:"1061657518684",appId:"1:1061657518684:web:5db7baa214b1d2da08fc99"};
+// Global AgentCoPilot appearance preference, shared by all dashboard pages.
+function initAgentCoPilotTheme(){
+ const root=document.documentElement;
+ let theme='dark';
+ try{theme=localStorage.getItem('agentcopilot-theme')==='light'?'light':'dark';}catch(e){}
+ root.dataset.theme=theme;
+ const apply=value=>{
+  theme=value==='light'?'light':'dark';root.dataset.theme=theme;
+  const button=document.querySelector('#agentcopilot-theme-toggle');
+  if(button){button.setAttribute('aria-pressed',String(theme==='light'));button.setAttribute('aria-label',theme==='dark'?'Switch to light mode':'Switch to dark mode');button.title=button.getAttribute('aria-label');button.innerHTML='<i data-lucide="'+(theme==='dark'?'sun':'moon')+'"></i><span>'+(theme==='dark'?'Light mode':'Dark mode')+'</span>';if(window.lucide)window.lucide.createIcons({root:button});}
+ };
+ const host=document.querySelector('.top-navbar .user-profile')||document.querySelector('.top-navbar');
+ if(host&&!document.querySelector('#agentcopilot-theme-toggle')){
+  const button=document.createElement('button');button.type='button';button.id='agentcopilot-theme-toggle';button.className='theme-toggle';
+  button.addEventListener('click',()=>{const next=theme==='dark'?'light':'dark';try{localStorage.setItem('agentcopilot-theme',next);}catch(e){}apply(next);});
+  if(host.classList.contains('user-profile')){const avatar=host.querySelector('.avatar');host.insertBefore(button,avatar||null);}else host.append(button);
+ }
+ apply(theme);
+}
+initAgentCoPilotTheme();
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),API="https://agentcopilot-html.miaj66355.workers.dev";
 const $=s=>document.querySelector(s),esc=v=>String(v??"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function token(){if(!auth.currentUser)throw new Error("Please sign in again.");return auth.currentUser.getIdToken();}
