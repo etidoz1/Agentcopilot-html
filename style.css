@@ -273,3 +273,40 @@ body {
 .seller-delete{background:#7f1d1d;color:#fee2e2}
 .seller-action:disabled,.seller-delete:disabled{opacity:.55;cursor:wait}
 @media(max-width:560px){.seller-listings-head{align-items:flex-start}.seller-listing{align-items:flex-start}.seller-listing-actions{width:100%}.seller-listing-actions button{width:100%}}
+
+
+/* Shared account profile and help centre */
+.profile-avatar-link{overflow:hidden;color:var(--text-main);text-decoration:none;cursor:pointer;border:1px solid var(--border-color);flex-shrink:0}
+.profile-avatar-link:focus-visible,.faq-item summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.account-page{width:min(900px,100%);margin:34px auto;padding:0 24px 48px}
+.account-eyebrow{margin:0 0 8px;color:#6ee7b7;font-size:.76rem;font-weight:700;letter-spacing:.12em}
+.account-page h1{margin:0;font-size:clamp(1.7rem,4vw,2.35rem);color:#fafafa}
+.account-intro{margin:9px 0 24px;color:#a1a1aa;line-height:1.6}
+.profile-card{padding:24px;background:#111827;border:1px solid #333;border-radius:16px;box-shadow:0 12px 35px rgba(0,0,0,.16)}
+.profile-identity{display:flex;align-items:center;gap:17px;padding-bottom:22px;border-bottom:1px solid #333}
+.profile-large-avatar{width:72px;height:72px;flex:0 0 72px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(16,185,129,.16);border:1px solid rgba(16,185,129,.4);color:#6ee7b7;font-size:1.35rem;font-weight:800}
+.profile-identity h2{margin:0 0 6px;color:#fafafa;font-size:1.2rem;overflow-wrap:anywhere}
+.profile-identity p{margin:0;color:#a1a1aa;overflow-wrap:anywhere}
+.profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px;margin:0}
+.profile-fields>div{padding:17px 0;border-bottom:1px solid #29292f;min-width:0}
+.profile-fields dt{margin-bottom:7px;color:#a1a1aa;font-size:.78rem}
+.profile-fields dd{margin:0;color:#f4f4f5;font-size:.95rem;font-weight:600;overflow-wrap:anywhere}
+.profile-security-note{margin:20px 0 0;color:#a1a1aa;font-size:.82rem;line-height:1.6}
+.faq-page{max-width:850px}
+.faq-search-label{display:block;margin:0 0 8px;color:#d4d4d8;font-size:.85rem;font-weight:600}
+.faq-search{width:100%;box-sizing:border-box;padding:13px 15px;margin-bottom:18px;border:1px solid #3f3f46;border-radius:10px;background:#111827;color:#fafafa;font:inherit}
+.faq-search:focus{outline:2px solid rgba(16,185,129,.55);border-color:#10b981}
+.faq-list{display:flex;flex-direction:column;gap:10px}
+.faq-item{background:#111827;border:1px solid #333;border-radius:12px;overflow:hidden}
+.faq-item[hidden]{display:none}
+.faq-item summary{position:relative;list-style:none;cursor:pointer;padding:17px 48px 17px 18px;color:#f4f4f5;font-weight:600;line-height:1.5}
+.faq-item summary::-webkit-details-marker{display:none}
+.faq-item summary:after{content:'+';position:absolute;right:18px;top:50%;transform:translateY(-50%);color:#6ee7b7;font-size:1.45rem;font-weight:400}
+.faq-item[open] summary:after{content:'−'}
+.faq-item[open] summary{border-bottom:1px solid #333;color:#6ee7b7}
+.faq-answer{padding:2px 18px 14px;color:#d4d4d8;line-height:1.7;font-size:.9rem}
+.faq-answer p{margin:12px 0 0}
+.faq-no-results{color:#a1a1aa;padding:16px}
+@media(max-width:600px){.account-page{margin:22px auto;padding:0 16px 36px}.profile-card{padding:17px}.profile-fields{grid-template-columns:1fr}.profile-identity{align-items:flex-start}.profile-large-avatar{width:58px;height:58px;flex-basis:58px}.faq-item summary{padding:15px 42px 15px 14px}.faq-answer{padding:1px 14px 13px}}
+
+.profile-avatar-link img{width:100%;height:100%;object-fit:cover;border-radius:50%}\n
