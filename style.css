@@ -255,3 +255,21 @@ body {
 .notification-receipt dt{color:#a1a1aa}.notification-receipt dd{margin:0;overflow-wrap:anywhere}
 .notification-receipt-state{color:#a1a1aa;font-size:.85rem;margin-top:14px}
 @media(max-width:520px){.notification-detail{padding:15px}.notification-receipt dl{grid-template-columns:1fr;gap:3px}.notification-receipt dd{margin-bottom:8px}}
+
+/* Seller listing lifecycle controls */
+.seller-listings{margin-top:22px;padding-top:18px;border-top:1px solid #3f3f46}
+.seller-listings-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.seller-listings-head h3{margin:0 0 5px;font-size:1rem}
+.seller-listings-head p{margin:0}
+.seller-listing{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 0;border-bottom:1px solid #27272a}
+.seller-listing-main{display:grid;gap:4px;flex:1;min-width:160px}
+.seller-listing-main strong{color:#f4f4f5}
+.seller-status{font-size:.72rem;text-transform:capitalize;border-radius:20px;padding:5px 9px;background:#27272a;color:#d4d4d8}
+.seller-status-sold{background:rgba(234,179,8,.13);color:#facc15}
+.seller-status-published{background:rgba(16,185,129,.13);color:#34d399}
+.seller-status-paused{color:#fbbf24}
+.seller-listing-actions{display:flex;gap:8px}
+.seller-action,.seller-delete{border:0;border-radius:8px;padding:9px 12px;font-weight:700;cursor:pointer}
+.seller-delete{background:#7f1d1d;color:#fee2e2}
+.seller-action:disabled,.seller-delete:disabled{opacity:.55;cursor:wait}
+@media(max-width:560px){.seller-listings-head{align-items:flex-start}.seller-listing{align-items:flex-start}.seller-listing-actions{width:100%}.seller-listing-actions button{width:100%}}

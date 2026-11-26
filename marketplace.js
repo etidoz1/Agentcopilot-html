@@ -10,7 +10,7 @@ function moneyFormat(v,currency="NGN"){try{return new Intl.NumberFormat(undefine
 async function getToken(){if(!auth.currentUser)throw new Error("Please sign in to continue.");return auth.currentUser.getIdToken();}
 $("buyer-tab").onclick=()=>{$("buyer-tab").classList.add("active");$("seller-tab").classList.remove("active");$("buyer-panel").hidden=false;$("seller-panel").hidden=true;};
 $("seller-tab").onclick=()=>{$("seller-tab").classList.add("active");$("buyer-tab").classList.remove("active");$("seller-panel").hidden=false;$("buyer-panel").hidden=true;};
-onAuthStateChanged(auth,u=>{if(u)$("seller-name").value=u.displayName||"";});
+onAuthStateChanged(auth,u=>{if(u){$("seller-name").value=u.displayName||"";loadSellerListings();}});
 function render(rows,external=[]){
  const host=$("property-results");$("result-count").textContent=(rows.length+external.length)+" found ("+rows.length+" AgentCoPilot, "+external.length+" external)";
  if(!rows.length&&!external.length){host.innerHTML='<div class="empty">No matching listings were found in the sources searched. Try another location, budget or search description.</div>';return;}
@@ -43,6 +43,36 @@ $("search-form").addEventListener("submit",async e=>{
   render(d.properties||[],d.external_results||[]);const internalCount=Number(d.internal_count??(d.properties||[]).length),externalCount=Number(d.external_count??(d.external_results||[]).length);let searchMessage="AI understood your request: "+JSON.stringify(d.criteria)+". ";if(d.external_fallback_used){searchMessage+="AgentCoPilot was searched first and returned "+internalCount+" matching listing(s). "+(d.external_search_status==="completed"?externalCount+" external result(s) were added because fewer than five internal matches were available.":d.external_search_status==="unavailable"?"External search is temporarily unavailable; showing the AgentCoPilot matches found.":"External search was used to supplement the internal results.");}else{searchMessage+="Found "+internalCount+" AgentCoPilot listings. That is enough to meet the five-result threshold, so external search was not used.";}notice("search-notice",searchMessage);
  }catch(err){notice("search-notice",err.message||"Unable to search.");}finally{btn.disabled=false;btn.textContent="Ask AI to find properties";}
 });
+
+async function loadSellerListings(){
+ const host=$("seller-listings");if(!host||!auth.currentUser)return;
+ host.innerHTML='<div class="empty">Loading your listings…</div>';
+ try{
+  const r=await fetch(API+"/api/my/properties",{headers:{Authorization:"Bearer "+await getToken()}}),d=await r.json();
+  if(!r.ok)throw new Error(d.error||"Could not load your listings.");
+  const rows=d.properties||[];
+  host.innerHTML=rows.length?rows.map(p=>{
+   const status=String(p.status||"").toLowerCase(),currency=p.currency||"NGN";
+   const actions=status==="published"&&p.purpose==="sale"?'<button type="button" class="primary seller-action" data-mark-sold="'+esc(p.id)+'">Mark as sold</button>':status==="sold"?'<button type="button" class="seller-delete" data-delete-listing="'+esc(p.id)+'">Delete listing</button>':"";
+   return '<article class="seller-listing"><div class="seller-listing-main"><strong>'+esc(p.title)+'</strong><span class="muted">'+esc([p.city,p.country].filter(Boolean).join(", "))+' · '+moneyFormat(p.price,currency)+'</span></div><span class="seller-status seller-status-'+esc(status)+'">'+esc(status.replace(/_/g," "))+'</span><div class="seller-listing-actions">'+actions+'</div></article>';
+  }).join(""):'<div class="empty">You have not published any property listings yet.</div>';
+ }catch(e){host.innerHTML='<div class="empty">'+esc(e.message)+'</div>';}
+}
+$("refresh-seller-listings")?.addEventListener("click",loadSellerListings);
+$("seller-listings")?.addEventListener("click",async e=>{
+ const sold=e.target.closest("[data-mark-sold]"),del=e.target.closest("[data-delete-listing]");
+ if(!sold&&!del)return;
+ const id=(sold||del).dataset.markSold||(del&&del.dataset.deleteListing);
+ if(sold&&!confirm("Mark this property as sold? It will immediately disappear from buyer search and new payment checkout."))return;
+ if(del&&!confirm("Delete this sold listing from your dashboard? Payment receipts, transaction history and notifications will be preserved."))return;
+ const btn=sold||del;btn.disabled=true;
+ try{
+  const r=await fetch(API+"/api/my/properties/"+encodeURIComponent(id),{method:sold?"PATCH":"DELETE",headers:{"Content-Type":"application/json","Authorization":"Bearer "+await getToken()},body:sold?JSON.stringify({status:"sold"}):undefined}),d=await r.json();
+  if(!r.ok)throw new Error(d.error||"The listing could not be updated.");
+  notice("seller-notice",d.message||"Listing updated.");await loadSellerListings();
+ }catch(err){notice("seller-notice",err.message||"The listing could not be updated.");btn.disabled=false;}
+});
+
 async function photoData(file){
  const bmp=await createImageBitmap(file),scale=Math.min(1,1200/bmp.width),canvas=document.createElement("canvas");canvas.width=Math.round(bmp.width*scale);canvas.height=Math.round(bmp.height*scale);canvas.getContext("2d").drawImage(bmp,0,0,canvas.width,canvas.height);bmp.close();
  let q=.72,blob=await new Promise(res=>canvas.toBlob(res,"image/jpeg",q));while(blob&&blob.size>300*1024&&q>.4){q-=.08;blob=await new Promise(res=>canvas.toBlob(res,"image/jpeg",q));}

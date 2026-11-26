@@ -11,7 +11,7 @@ function cleanExternalSnippet(value){
  return text.slice(0,650);
 }
 function money(v){const n=Number(v);return Number.isFinite(n)&&n>0?n:null;}
-function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PATCH, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
+function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PATCH, DELETE, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
 let firebaseCerts=null,firebaseCertExpires=0;
 function b64urlBytes(value){const s=value.replace(/-/g,"+").replace(/_/g,"/");const padded=s+"=".repeat((4-s.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 function derNode(bytes,pos){const tag=bytes[pos++];let length=bytes[pos++];if(length&128){const count=length&127;length=0;for(let i=0;i<count;i++)length=(length<<8)|bytes[pos++];}const start=pos;return {tag,start,next:start+length};}
@@ -178,6 +178,30 @@ export default {async fetch(request,env){
    const statements=[env.DB.prepare("INSERT INTO properties (id,seller_uid,seller_name,seller_phone,seller_email,purpose,property_type,title,description,location,city,state,country,price,currency,bedrooms,bathrooms,size_sqm,condition,features,status,created_at,updated_at,seller_authority_confirmed,contact_consent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,? ,'published',?,?,1,1)").bind(id,user.uid,name,phone,user.email,purpose,type,title,description,location,city,state,country,price,currency,Number(b.bedrooms)||null,Number(b.bathrooms)||null,Number(b.size_sqm)||null,clean(b.condition,80),JSON.stringify(features),now,now)];
    photos.forEach((photo,i)=>statements.push(env.DB.prepare("INSERT INTO property_images (id,property_id,image_data,mime_type,sort_order,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),id,photo,photo.slice(5,photo.indexOf(";")),i,now)));
    await env.DB.batch(statements);try{await notify(env,user.uid,"listing_created","Property published",title+" is now live on AgentCoPilot.","./ai-tools.html#seller-panel");}catch(e){console.error("Listing notification failed",e);}return json({success:true,property_id:id,message:"Your property has been published."},201,headers);
+  }
+  if(url.pathname==="/api/my/properties"&&request.method==="GET"){
+   const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+   const rows=await env.DB.prepare("SELECT id,title,purpose,property_type,price,currency,city,country,status,created_at,updated_at FROM properties WHERE seller_uid=? AND status!='deleted' ORDER BY created_at DESC LIMIT 100").bind(user.uid).all();
+   return json({properties:rows.results||[]},200,headers);
+  }
+  if(url.pathname.startsWith("/api/my/properties/")&&(request.method==="PATCH"||request.method==="DELETE")){
+   const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+   const id=decodeURIComponent(url.pathname.split("/").pop()||"");if(!id)return json({error:"A property ID is required."},400,headers);
+   const property=await env.DB.prepare("SELECT id,seller_uid,title,purpose,status FROM properties WHERE id=?").bind(id).first();
+   if(!property||property.seller_uid!==user.uid)return json({error:"This listing was not found in your account."},404,headers);
+   const now=new Date().toISOString();
+   if(request.method==="PATCH"){
+    const b=await request.json().catch(()=>({}));if(clean(b.status,20).toLowerCase()!=="sold")return json({error:"The only seller status action available here is Mark as sold."},400,headers);
+    if(property.purpose!=="sale")return json({error:"Only property-for-sale listings can be marked as sold."},400,headers);
+    if(property.status==="sold")return json({success:true,status:"sold",message:"This property is already marked as sold."},200,headers);
+    if(property.status!=="published")return json({error:"Only a currently published listing can be marked as sold."},409,headers);
+    await env.DB.prepare("UPDATE properties SET status='sold',updated_at=? WHERE id=? AND seller_uid=? AND status='published'").bind(now,id,user.uid).run();
+    try{await notify(env,user.uid,"listing_sold","Property marked as sold",property.title+" is no longer available to buyers. You can now delete the listing while its transaction records remain available.","./ai-tools.html#seller-panel");}catch(e){console.error("Sold listing notification failed",e);}
+    return json({success:true,status:"sold",message:"Property marked as sold and removed from buyer search. You can now delete the listing."},200,headers);
+   }
+   if(property.status!=="sold")return json({error:"Mark this property as sold before deleting its listing."},409,headers);
+   await env.DB.prepare("UPDATE properties SET status='deleted',updated_at=? WHERE id=? AND seller_uid=? AND status='sold'").bind(now,id,user.uid).run();
+   return json({success:true,status:"deleted",message:"Listing deleted from your dashboard and marketplace. Payment and transaction records have been preserved."},200,headers);
   }
   if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
    const id=url.pathname.split("/").pop(),row=await env.DB.prepare("SELECT * FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);
