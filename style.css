@@ -378,3 +378,23 @@ html[data-theme="light"] .close-menu{background:#f1f5f9!important;color:#334155!
 html[data-theme="light"] .close-menu svg{stroke:#334155!important}
 html[data-theme="light"] .menu-backdrop{background:rgba(15,23,42,.22)!important}
 html[data-theme="light"] body.menu-open .top-navbar{background:#fff!important}
+
+
+/* Profile page typography and readable identity/details in both themes */
+.account-page{font-family:'Manrope','Inter',sans-serif}
+.account-page h1,.profile-identity h2{font-family:'Manrope','Inter',sans-serif;letter-spacing:-.035em}
+.profile-card{background:#111827;border:1px solid #334155;border-radius:18px}
+.profile-identity{background:rgba(30,41,59,.42);border-bottom:1px solid #334155;border-radius:12px;padding:18px;margin-bottom:8px}
+.profile-identity h2{color:#f8fafc;font-size:1.45rem;font-weight:800;line-height:1.25}
+.profile-identity p{color:#cbd5e1;font-size:.92rem;line-height:1.5}
+.profile-fields>div{padding:17px 14px;border-bottom:1px solid #334155}
+.profile-fields dt{color:#94a3b8;font-size:.76rem;font-weight:700;letter-spacing:.055em;text-transform:uppercase}
+.profile-fields dd{color:#f1f5f9;font-family:'Manrope','Inter',sans-serif;font-size:1rem;font-weight:700;line-height:1.5}
+html[data-theme="light"] .account-page .profile-card{background:#fff!important;border:1px solid #dbe4ee!important;box-shadow:0 14px 36px rgba(15,23,42,.07)!important}
+html[data-theme="light"] .account-page .profile-identity{background:#f1f5f9!important;border:1px solid #e2e8f0!important;border-bottom:1px solid #e2e8f0!important}
+html[data-theme="light"] .account-page .profile-identity h2{color:#0f172a!important;font-weight:800!important}
+html[data-theme="light"] .account-page .profile-identity p{color:#475569!important}
+html[data-theme="light"] .account-page .profile-fields>div{background:#fff!important;border-bottom:1px solid #e2e8f0!important}
+html[data-theme="light"] .account-page .profile-fields dt{color:#64748b!important}
+html[data-theme="light"] .account-page .profile-fields dd{color:#172033!important;font-weight:750!important}
+html[data-theme="light"] .account-page .profile-security-note{color:#64748b!important}
