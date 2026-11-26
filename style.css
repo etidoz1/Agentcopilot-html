@@ -309,4 +309,5 @@ body {
 .faq-no-results{color:#a1a1aa;padding:16px}
 @media(max-width:600px){.account-page{margin:22px auto;padding:0 16px 36px}.profile-card{padding:17px}.profile-fields{grid-template-columns:1fr}.profile-identity{align-items:flex-start}.profile-large-avatar{width:58px;height:58px;flex-basis:58px}.faq-item summary{padding:15px 42px 15px 14px}.faq-answer{padding:1px 14px 13px}}
 
-.profile-avatar-link img{width:100%;height:100%;object-fit:cover;border-radius:50%}\n
+
+.profile-avatar-link img{width:100%;height:100%;object-fit:cover;border-radius:50%}
