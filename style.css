@@ -235,3 +235,23 @@ body {
  body.menu-open{overflow:hidden}
  .menu-toggle{display:inline-flex!important;align-items:center;justify-content:center;min-width:40px;min-height:40px;border:0;background:transparent;color:var(--text-main);cursor:pointer}
 }
+
+/* Click-to-open full notification and payment receipt */
+.notification-preview{display:block;flex:1;min-width:0;text-align:left;padding:0;border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.notification-preview strong{display:block;color:#f4f4f5}
+.notification-preview p{margin:5px 0;color:#d4d4d8;font-size:.84rem;line-height:1.4}
+.notification-preview small{color:#a1a1aa;font-size:.72rem}
+.notification-detail-backdrop{position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px}
+.notification-detail-backdrop[hidden]{display:none}
+.notification-detail{width:min(620px,100%);max-height:85vh;overflow:auto;background:#111827;color:#f4f4f5;border:1px solid #3f3f46;border-radius:16px;padding:20px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.notification-detail-head{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid #3f3f46;padding-bottom:12px;margin-bottom:14px}
+.notification-detail-head h2{font-size:1.1rem;margin:0}
+.notification-detail-head button{background:transparent;border:0;color:#f4f4f5;font-size:1.7rem;cursor:pointer}
+.notification-detail-body>p{line-height:1.6;overflow-wrap:anywhere}
+.notification-detail-date{color:#a1a1aa;font-size:.8rem}
+.notification-receipt{margin-top:18px;padding:16px;background:#18181b;border:1px solid #3f3f46;border-radius:12px}
+.notification-receipt h3{margin:0 0 12px;font-size:1rem}
+.notification-receipt dl{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(0,1.4fr);gap:9px 12px;margin:0;font-size:.84rem}
+.notification-receipt dt{color:#a1a1aa}.notification-receipt dd{margin:0;overflow-wrap:anywhere}
+.notification-receipt-state{color:#a1a1aa;font-size:.85rem;margin-top:14px}
+@media(max-width:520px){.notification-detail{padding:15px}.notification-receipt dl{grid-template-columns:1fr;gap:3px}.notification-receipt dd{margin-bottom:8px}}
