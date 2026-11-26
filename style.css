@@ -341,3 +341,18 @@ html[data-theme="light"] .notice,html[data-theme="light"] .empty,html[data-theme
 html[data-theme="light"] .profile-fields .profile-field,html[data-theme="light"] .profile-identity{background:#f8fafc!important;border-color:#e2e8f0!important}
 html[data-theme="light"] .profile-fields .profile-field strong,html[data-theme="light"] .profile-identity h2{color:#172033!important}
 html[data-theme="light"] .admin-wrap,html[data-theme="light"] .admin-section,html[data-theme="light"] .admin-stats .stat{color:#172033}
+
+/* Mobile drawer + hamburger must follow the selected theme too. */
+html[data-theme="light"] .sidebar,html[data-theme="light"] .sidebar.show-mobile{background:#fff!important;background-color:#fff!important;color:#172033!important;border-right:1px solid #e2e8f0!important;box-shadow:12px 0 35px rgba(15,23,42,.12)!important}
+html[data-theme="light"] .sidebar .logo-container{background:#fff!important;background-color:#fff!important;border-bottom:1px solid #e2e8f0!important;color:#172033!important}
+html[data-theme="light"] .sidebar .logo-text,html[data-theme="light"] .sidebar .close-menu,html[data-theme="light"] .sidebar .close-menu svg{color:#334155!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item{color:#475569!important;background:transparent!important;border-color:transparent!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item:hover,html[data-theme="light"] .sidebar .nav-menu .nav-item.active{background:#ecfdf5!important;color:#047857!important;border-color:#d1fae5!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item svg{color:inherit!important}
+html[data-theme="light"] .sidebar .logout-btn{background:#f8fafc!important;color:#334155!important;border-color:#e2e8f0!important}
+html[data-theme="light"] .menu-toggle{background:transparent!important;background-color:transparent!important;color:#334155!important;border-color:transparent!important}
+html[data-theme="light"] .menu-toggle svg{color:#334155!important;stroke:#334155!important}
+html[data-theme="light"] .close-menu{background:#f1f5f9!important;color:#334155!important;border-color:#cbd5e1!important}
+html[data-theme="light"] .close-menu svg{stroke:#334155!important}
+html[data-theme="light"] .menu-backdrop{background:rgba(15,23,42,.22)!important}
+html[data-theme="light"] body.menu-open .top-navbar{background:#fff!important}
