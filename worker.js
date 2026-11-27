@@ -342,6 +342,29 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
     await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
    }
 
+  if(url.pathname.startsWith("/api/support")&&(request.method==="GET"||request.method==="POST"||request.method==="PATCH")){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to contact support."},401,headers);
+    const admin=await isAdmin(user);const now=new Date().toISOString();
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS support_threads (id TEXT PRIMARY KEY,user_uid TEXT NOT NULL,user_email TEXT NOT NULL,user_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_message TEXT NOT NULL DEFAULT '')").run();
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS support_messages (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,sender_uid TEXT NOT NULL,sender_role TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL)").run();
+    if(url.pathname==="/api/support"&&request.method==="GET"){
+      if(admin){const rows=await env.DB.prepare("SELECT t.*, (SELECT COUNT(*) FROM support_messages m WHERE m.thread_id=t.id AND m.sender_role='user') AS user_message_count FROM support_threads t ORDER BY CASE t.status WHEN 'open' THEN 0 ELSE 1 END,t.updated_at DESC LIMIT 150").all();return json({threads:rows.results||[]},200,headers);}
+      const thread=await env.DB.prepare("SELECT id,status,created_at,updated_at,last_message FROM support_threads WHERE user_uid=?").bind(user.uid).first();return json({thread:thread||null},200,headers);
+    }
+    if(url.pathname==="/api/support"&&request.method==="POST"){
+      const b=await request.json(),message=clean(b.message,3000).trim();if(!message)return json({error:"Enter a message before sending."},400,headers);
+      let threadId=clean(b.thread_id,80);let thread;
+      if(admin){if(!threadId)return json({error:"Select a support conversation."},400,headers);thread=await env.DB.prepare("SELECT id,user_uid,status FROM support_threads WHERE id=?").bind(threadId).first();if(!thread)return json({error:"Conversation not found."},404,headers);}
+      else{thread=await env.DB.prepare("SELECT id,user_uid,status FROM support_threads WHERE user_uid=?").bind(user.uid).first();if(!thread){threadId=crypto.randomUUID();const name=clean(user.email.split('@')[0],100)||'AgentCoPilot user';await env.DB.prepare("INSERT INTO support_threads (id,user_uid,user_email,user_name,status,created_at,updated_at,last_message) VALUES (?,?,?,?,'open',?,?,?)").bind(threadId,user.uid,user.email,name,now,now,message.slice(0,180)).run();thread={id:threadId,user_uid:user.uid,status:'open'};}else threadId=thread.id;if(thread.status==='resolved')await env.DB.prepare("UPDATE support_threads SET status='open' WHERE id=?").bind(threadId).run();}
+      const mid=crypto.randomUUID();await env.DB.prepare("INSERT INTO support_messages (id,thread_id,sender_uid,sender_role,message,created_at) VALUES (?,?,?,?,?,?)").bind(mid,threadId,user.uid,admin?'admin':'user',message,now).run();await env.DB.prepare("UPDATE support_threads SET updated_at=?,last_message=?,status=? WHERE id=?").bind(now,message.slice(0,180),admin?'open':'open',threadId).run();
+      if(admin)await notify(env,thread.user_uid,'support_reply','Support replied','The AgentCoPilot support team replied to your message.','./support.html');
+      return json({success:true,thread_id:threadId,message_id:mid},201,headers);
+    }
+    const id=decodeURIComponent(url.pathname.split('/').pop()||'');if(!id||id==='support')return json({error:'Conversation ID required.'},400,headers);
+    const thread=await env.DB.prepare("SELECT * FROM support_threads WHERE id=?").bind(id).first();if(!thread)return json({error:'Conversation not found.'},404,headers);if(!admin&&thread.user_uid!==user.uid)return json({error:'You cannot access this conversation.'},403,headers);
+    if(request.method==='GET'){const rows=await env.DB.prepare("SELECT id,sender_role,message,created_at FROM support_messages WHERE thread_id=? ORDER BY created_at ASC LIMIT 500").bind(id).all();return json({thread:{id:thread.id,status:thread.status,user_name:thread.user_name,user_email:admin?thread.user_email:null},messages:rows.results||[]},200,headers);}
+    if(request.method==='PATCH'){if(!admin)return json({error:'Administrator access required.'},403,headers);const b=await request.json(),status=clean(b.status,20);if(!['open','resolved'].includes(status))return json({error:'Invalid conversation status.'},400,headers);await env.DB.prepare("UPDATE support_threads SET status=?,updated_at=? WHERE id=?").bind(status,now,id).run();return json({success:true,status},200,headers);}
+  }
   if(url.pathname==="/api/generate"&&request.method==="POST"){const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to use listing generation."},401,headers);const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
   return json({error:"Not found."},404,headers);
  }catch(e){console.error("AgentCoPilot API error",e);return json({error:e.message||"The request could not be completed."},500,headers);}
