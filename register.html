@@ -39,7 +39,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+        import { getAuth, createUserWithEmailAndPassword, sendEmailVerification, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
         import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -93,8 +93,10 @@
                     createdAt: new Date().toISOString()
                 });
 
-                // 3. Redirect to dashboard
-                window.location.href = "./index.html";
+                // Require proof that the user controls this email address before access.
+                await sendEmailVerification(user, { url: window.location.origin + "/Agentcopilot-html/verify-email.html", handleCodeInApp: false });
+                await signOut(auth);
+                window.location.href = "./verify-email.html?sent=1";
             } catch (error) {
                 btn.innerText = "Create Account";
                 errorMsg.innerText = error.message;

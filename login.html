@@ -38,7 +38,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
-        import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, sendEmailVerification } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
         import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -66,6 +66,7 @@
 
             try {
                 const credential = await signInWithEmailAndPassword(auth, email, password);
+                if (!credential.user.emailVerified) { await sendEmailVerification(credential.user); await signOut(auth); throw new Error("Your email is not verified yet. We sent a fresh verification link. Open it, then sign in again."); }
                 const profile = await getDoc(doc(db, "users", credential.user.uid));
                 const role = String(profile.exists() ? (profile.data().role || "user") : "user").toLowerCase();
                 window.location.replace(["admin", "owner"].includes(role) ? "./admin.html" : "./index.html");

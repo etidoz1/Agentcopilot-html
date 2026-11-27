@@ -21,7 +21,7 @@ async function currentUser(request,env){
  try{
   const parts=token.split(".");if(parts.length!==3)return null;
   const header=JSON.parse(new TextDecoder().decode(b64urlBytes(parts[0]))),claims=JSON.parse(new TextDecoder().decode(b64urlBytes(parts[1])));
-  const now=Math.floor(Date.now()/1000);if(header.alg!=="RS256"||!header.kid||claims.aud!=="agentcopilot-98817"||claims.iss!=="https://securetoken.google.com/agentcopilot-98817"||!claims.sub||claims.sub.length>128||!claims.exp||claims.exp<=now||claims.iat>now+60||!claims.auth_time)return null;
+  const now=Math.floor(Date.now()/1000);if(header.alg!=="RS256"||!header.kid||claims.aud!=="agentcopilot-98817"||claims.iss!=="https://securetoken.google.com/agentcopilot-98817"||!claims.sub||claims.sub.length>128||!claims.exp||claims.exp<=now||claims.iat>now+60||!claims.auth_time||claims.email_verified!==true)return null;
   if(!firebaseCerts||firebaseCertExpires<Date.now()){const r=await fetch("https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com");if(!r.ok)return null;firebaseCerts=await r.json();firebaseCertExpires=Date.now()+50*60*1000;}
   const pem=firebaseCerts[header.kid];if(!pem)return null;const spki=certificateSpki(pem);const key=await crypto.subtle.importKey("spki",spki,{name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["verify"]);
   const signature=b64urlBytes(parts[2]),message=new TextEncoder().encode(parts[0]+"."+parts[1]);const valid=await crypto.subtle.verify("RSASSA-PKCS1-v1_5",key,signature,message);return valid?{uid:claims.sub,email:claims.email||"",token}:null;
