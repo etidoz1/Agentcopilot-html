@@ -3,6 +3,11 @@ let paymentFxCache = new Map();
 let paymentFxSchemaReady = false;
 function json(data,status=200,headers={}){return new Response(JSON.stringify(data),{status,headers:Object.assign({"Content-Type":"application/json; charset=utf-8"},headers)});}
 function clean(v,n=500){return typeof v==="string"?v.trim().slice(0,n):"";}
+function redactContactText(value){
+ if(typeof value!=="string")return value;
+ return value.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,"[contact protected]")
+  .replace(/(?<![\w])\+?(?:[\s().-]*\d){10,15}(?![\w])/g,match=>{const digits=match.replace(/\D/g,"");return digits.length>=10&&digits.length<=15?"[contact protected]":match;});
+}
 function cleanExternalSnippet(value){
  let text=typeof value==="string"?value:"";
  text=text.replace(/<!--[\s\S]*?-->/g," ").replace(/<[^>]*>/g," ").replace(/&nbsp;|&#160;/gi," ").replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">");
@@ -282,7 +287,7 @@ async function externalPropertySearch(env,query,criteria){
  const candidates=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string"&&isLikelyResidentialListing(x));
  const results=candidates.slice(0,8).map(x=>{
   const snippet=cleanExternalSnippet(x.content||"");let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
-  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"};
+  return {title:redactContactText(clean(x.title,220)),url:x.url,snippet:redactContactText(snippet),source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"};
  });
  await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property-specific structured data from the original listing page":"unavailable";}));
  await tavilyListingImages(env,results);
@@ -336,7 +341,7 @@ export default {async fetch(request,env){
   }
   if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
    const id=url.pathname.split("/").pop(),row=await env.DB.prepare("SELECT * FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);
-   const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:row,images:imgs.results||[]},200,headers);
+   const {seller_phone,seller_email,...publicProperty}=row;publicProperty.description=redactContactText(publicProperty.description);publicProperty.title=redactContactText(publicProperty.title);const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:publicProperty,images:imgs.results||[]},200,headers);
   }
   if(url.pathname==="/api/ai-search"&&request.method==="POST"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to search properties."},401,headers);const b=await request.json(),q=clean(b.query,1200);if(q.length<8)return json({error:"Describe the property you want in more detail."},400,headers);
@@ -435,7 +440,7 @@ export default {async fetch(request,env){
     const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_settings (id,provider,mode,public_key,secret_cipher,webhook_cipher,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,mode=excluded.mode,public_key=excluded.public_key,secret_cipher=excluded.secret_cipher,webhook_cipher=excluded.webhook_cipher,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(provider,mode,publicKey,secretCipher,webhookCipher,user.uid,now).run();
     return json({success:true,message:"Payment provider credentials saved securely.",provider,mode,updated_at:now},200,headers);
    }
-  if(url.pathname==="/api/generate"&&request.method==="POST"){const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
+  if(url.pathname==="/api/generate"&&request.method==="POST"){const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to use listing generation."},401,headers);const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
   return json({error:"Not found."},404,headers);
  }catch(e){console.error("AgentCoPilot API error",e);return json({error:e.message||"The request could not be completed."},500,headers);}
 }};

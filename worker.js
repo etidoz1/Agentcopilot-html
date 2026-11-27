@@ -341,7 +341,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
     await notify(env,property.seller_uid,"listing_status","Listing status changed",property.title+" is now "+status+".","./ai-tools.html#seller-panel");return json({success:true,status},200,headers);
    }
 
-  if(url.pathname==="/api/generate"&&request.method==="POST"){const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
+  if(url.pathname==="/api/generate"&&request.method==="POST"){const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to use listing generation."},401,headers);const b=await request.json(),prompt=clean(b.prompt,12000);if(!prompt)return json({error:"Please provide property information."},400,headers);return json({result:await listingCopy(env,prompt)},200,headers);}
   return json({error:"Not found."},404,headers);
  }catch(e){console.error("AgentCoPilot API error",e);return json({error:e.message||"The request could not be completed."},500,headers);}
 }};
