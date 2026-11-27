@@ -11,7 +11,7 @@ function cleanExternalSnippet(value){
  return text.slice(0,650);
 }
 function money(v){const n=Number(v);return Number.isFinite(n)&&n>0?n:null;}
-function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PATCH, DELETE, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
+function cors(origin,allowed){return origin&&allowed.includes(origin)?{"Access-Control-Allow-Origin":origin,"Access-Control-Allow-Methods":"GET, POST, PUT, PATCH, DELETE, OPTIONS","Access-Control-Allow-Headers":"Content-Type, Authorization","Access-Control-Max-Age":"86400","Vary":"Origin"}:{};}
 let firebaseCerts=null,firebaseCertExpires=0;
 function b64urlBytes(value){const s=value.replace(/-/g,"+").replace(/_/g,"/");const padded=s+"=".repeat((4-s.length%4)%4);const raw=atob(padded);return Uint8Array.from(raw,c=>c.charCodeAt(0));}
 function derNode(bytes,pos){const tag=bytes[pos++];let length=bytes[pos++];if(length&128){const count=length&127;length=0;for(let i=0;i<count;i++)length=(length<<8)|bytes[pos++];}const start=pos;return {tag,start,next:start+length};}
@@ -230,11 +230,205 @@ async function recheckExternalListings(env, limit=20){
  }
  return {checked};
 }
+let paymentFxCache = new Map();
+let paymentFxSchemaReady = false;
+
+function paymentCryptoKey(env){
+ const raw=String(env.PAYMENT_ENCRYPTION_KEY||"");if(!raw)throw new Error("Payment encryption is not configured on this deployment.");
+ let bytes;try{const clean=raw.replace(/-/g,"+").replace(/_/g,"/");const bin=atob(clean+"=".repeat((4-clean.length%4)%4));bytes=Uint8Array.from(bin,c=>c.charCodeAt(0));}catch{throw new Error("Payment encryption key is invalid. Configure a base64-encoded 32-byte key.");}
+ if(bytes.length!==32)throw new Error("Payment encryption key must decode to exactly 32 bytes.");return crypto.subtle.importKey("raw",bytes,{name:"AES-GCM"},false,["encrypt","decrypt"]);
+}
+
+async function encryptPaymentSecret(value,env){const iv=crypto.getRandomValues(new Uint8Array(12)),key=await paymentCryptoKey(env),cipher=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(value));return btoa(String.fromCharCode(...iv,...new Uint8Array(cipher)));}
+
+async function decryptPaymentSecret(value,env){const raw=Uint8Array.from(atob(value),c=>c.charCodeAt(0)),iv=raw.slice(0,12),cipher=raw.slice(12),key=await paymentCryptoKey(env),plain=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,cipher);return new TextDecoder().decode(plain);}
+
+function currencyDigits(currency){return ["JPY","KRW","XAF","XOF","UGX","RWF","BIF","GNF","KMF","VND"].includes(currency)?0:["BHD","KWD","OMR","JOD","TND"].includes(currency)?3:2;}
+
+function amountMinor(amount,currency){return Math.round(Number(amount)*Math.pow(10,currencyDigits(currency)));}
+
+function safeEqual(a,b){if(typeof a!=="string"||typeof b!=="string"||a.length!==b.length)return false;let diff=0;for(let i=0;i<a.length;i++)diff|=a.charCodeAt(i)^b.charCodeAt(i);return diff===0;}
+
+async function hmacHex(secret,message,hash="SHA-512"){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash},false,["sign"]);const sig=await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(message));return [...new Uint8Array(sig)].map(x=>x.toString(16).padStart(2,"0")).join("");}
+
+async function paymentTables(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_settings (id INTEGER PRIMARY KEY CHECK(id=1), provider TEXT NOT NULL, mode TEXT NOT NULL, public_key TEXT NOT NULL, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_pricing (id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL, viewing_fee_mode TEXT NOT NULL, viewing_fee_amount REAL NOT NULL DEFAULT 0, deposit_mode TEXT NOT NULL, deposit_amount REAL NOT NULL DEFAULT 0, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS agent_subscriptions (user_uid TEXT PRIMARY KEY,status TEXT NOT NULL,started_at TEXT NOT NULL,expires_at TEXT NOT NULL,last_reference TEXT NOT NULL,updated_at TEXT NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS bookings (id TEXT PRIMARY KEY, property_id TEXT NOT NULL, buyer_uid TEXT NOT NULL, seller_uid TEXT NOT NULL, booking_type TEXT NOT NULL, requested_for TEXT, payment_reference TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_transactions (id TEXT PRIMARY KEY, reference TEXT NOT NULL UNIQUE, provider TEXT NOT NULL, mode TEXT NOT NULL, payment_type TEXT NOT NULL, booking_id TEXT NOT NULL, property_id TEXT NOT NULL, buyer_uid TEXT NOT NULL, seller_uid TEXT NOT NULL, amount REAL NOT NULL, amount_minor INTEGER NOT NULL, currency TEXT NOT NULL, base_amount REAL, base_currency TEXT, fx_rate REAL, fx_rate_date TEXT, secret_cipher TEXT NOT NULL, webhook_cipher TEXT NOT NULL, provider_transaction_id TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, verified_at TEXT)").run();
+ if(!paymentFxSchemaReady){
+  const info=await env.DB.prepare("PRAGMA table_info(payment_transactions)").all();
+  const columns=new Set((info.results||[]).map(column=>column.name));
+  for(const [name,type] of [["base_amount","REAL"],["base_currency","TEXT"],["fx_rate","REAL"],["fx_rate_date","TEXT"]]){
+   if(!columns.has(name)){
+    try{await env.DB.prepare("ALTER TABLE payment_transactions ADD COLUMN "+name+" "+type).run();}
+    catch(error){if(!String(error?.message||error).toLowerCase().includes("duplicate column"))throw error;}
+   }
+  }
+  paymentFxSchemaReady=true;
+ }
+}
+
+async function paymentPricingTable(env){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS payment_pricing (id INTEGER PRIMARY KEY CHECK(id=1), currency TEXT NOT NULL, viewing_fee_mode TEXT NOT NULL, viewing_fee_amount REAL NOT NULL DEFAULT 0, deposit_mode TEXT NOT NULL, deposit_amount REAL NOT NULL DEFAULT 0, agent_access_monthly_amount REAL NOT NULL DEFAULT 0, updated_by TEXT NOT NULL, updated_at TEXT NOT NULL)").run();
+ try{await env.DB.prepare("ALTER TABLE payment_pricing ADD COLUMN agent_access_monthly_amount REAL NOT NULL DEFAULT 0").run();}catch(e){if(!String(e?.message||e).toLowerCase().includes("duplicate column"))throw e;}
+}
+
+async function paymentExchangeRate(fromCurrency,toCurrency){
+ const from=String(fromCurrency||"").toUpperCase(),to=String(toCurrency||"").toUpperCase();
+ if(!/^[A-Z]{3}$/.test(from)||!/^[A-Z]{3}$/.test(to))throw new Error("The listing or fee currency is invalid.");
+ if(from===to)return {rate:1,date:new Date().toISOString().slice(0,10),source:"same_currency"};
+ const cacheKey=from+":"+to,cached=paymentFxCache.get(cacheKey);
+ if(cached&&Date.now()-cached.fetchedAt<6*60*60*1000)return cached.value;
+ const url="https://api.frankfurter.dev/v2/rates?base="+encodeURIComponent(from)+"&quotes="+encodeURIComponent(to);
+ const response=await fetch(url,{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+ if(!response.ok)throw new Error("The exchange-rate service is temporarily unavailable. Please try again shortly.");
+ const rows=await response.json().catch(()=>[]),row=Array.isArray(rows)?rows.find(item=>String(item.base).toUpperCase()===from&&String(item.quote).toUpperCase()===to):null;
+ let rate=Number(row?.rate),date=String(row?.date||""),source="Frankfurter reference rates";
+ if(!Number.isFinite(rate)||rate<=0||!/^\d{4}-\d{2}-\d{2}$/.test(date)){
+  const fallback=await fetch("https://open.er-api.com/v6/latest/"+encodeURIComponent(from),{headers:{Accept:"application/json"},signal:AbortSignal.timeout(8000)});
+  const data=await fallback.json().catch(()=>({}));rate=Number(data?.rates?.[to]);date=String(data?.time_last_update_utc||"").slice(0,16);source="ExchangeRate-API reference rates";
+  if(!fallback.ok||data?.result!=="success"||!Number.isFinite(rate)||rate<=0)throw new Error("A current exchange rate for "+from+" to "+to+" is unavailable. Please try again later.");
+ }
+ if(source==="Frankfurter reference rates"){const ageDays=(Date.now()-Date.parse(date+"T23:59:59Z"))/86400000;if(!Number.isFinite(ageDays)||ageDays>3||ageDays< -1)throw new Error("The latest exchange rate is too old to use safely. Please try again later.");}
+ const value={rate,date,source};paymentFxCache.set(cacheKey,{value,fetchedAt:Date.now()});return value;
+}
+
+async function markPaymentSuccessful(env,tx,providerTransactionId){
+ const now=new Date().toISOString();const changed=await env.DB.prepare("UPDATE payment_transactions SET status='success',provider_transaction_id=COALESCE(?,provider_transaction_id),updated_at=?,verified_at=? WHERE reference=? AND status!='success'").bind(providerTransactionId||null,now,now,tx.reference).run();
+ if(!(changed.meta?.changes>0))return false;
+ await env.DB.prepare("UPDATE bookings SET status='paid',updated_at=? WHERE id=? AND status='awaiting_payment'").bind(now,tx.booking_id).run();
+ if(tx.payment_type==="agent_subscription"){await env.DB.prepare("CREATE TABLE IF NOT EXISTS agent_subscriptions (user_uid TEXT PRIMARY KEY,status TEXT NOT NULL,started_at TEXT NOT NULL,expires_at TEXT NOT NULL,last_reference TEXT NOT NULL,updated_at TEXT NOT NULL)").run();const prior=await env.DB.prepare("SELECT expires_at FROM agent_subscriptions WHERE user_uid=? AND status='active'").bind(tx.buyer_uid).first();const base=prior&&Date.parse(prior.expires_at)>Date.now()?Date.parse(prior.expires_at):Date.now();const started=new Date().toISOString(),expires=new Date(base+30*86400000).toISOString();await env.DB.prepare("INSERT INTO agent_subscriptions (user_uid,status,started_at,expires_at,last_reference,updated_at) VALUES (?,'active',?,?,?,?) ON CONFLICT(user_uid) DO UPDATE SET status='active',started_at=excluded.started_at,expires_at=excluded.expires_at,last_reference=excluded.last_reference,updated_at=excluded.updated_at").bind(tx.buyer_uid,started,expires,tx.reference,now).run();}
+ const p=await env.DB.prepare("SELECT title FROM properties WHERE id=?").bind(tx.property_id).first();const title=p?.title||"your property booking";
+ try{await notify(env,tx.buyer_uid,"payment_success","Payment confirmed","Your payment for "+title+" was confirmed.","./leads.html");}catch(e){console.error("Buyer payment notification failed",e);}
+ try{await notify(env,tx.seller_uid,"booking_payment","Customer payment received","A customer payment was confirmed for "+title+". Contact the customer to coordinate next steps.","./leads.html");}catch(e){console.error("Seller payment notification failed",e);}
+ return true;
+}
+
+async function verifyPaymentRecord(env,tx,providerTransactionId){
+ const secret=await decryptPaymentSecret(tx.secret_cipher,env);let data=null;
+ if(tx.provider==="paystack"){
+  const response=await fetch("https://api.paystack.co/transaction/verify/"+encodeURIComponent(tx.reference),{headers:{Authorization:"Bearer "+secret}});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!==true)throw new Error("Paystack could not verify this transaction.");data=payload.data;
+  if(data?.status!=="success"||data.reference!==tx.reference||Number(data.amount)!==Number(tx.amount_minor)||String(data.currency).toUpperCase()!==tx.currency||String(data.domain).toLowerCase()!==(tx.mode==="test"?"test":"live"))throw new Error("Paystack verification did not match the expected amount, currency, reference, environment, or status.");
+ }else{
+  if(!providerTransactionId)throw new Error("Flutterwave transaction ID is required for verification.");
+  const response=await fetch("https://api.flutterwave.com/v3/transactions/"+encodeURIComponent(providerTransactionId)+"/verify",{headers:{Authorization:"Bearer "+secret}});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!=="success")throw new Error("Flutterwave could not verify this transaction.");data=payload.data;
+  if(data?.status!=="successful"||data.tx_ref!==tx.reference||amountMinor(data.amount,tx.currency)!==Number(tx.amount_minor)||String(data.currency).toUpperCase()!==tx.currency)throw new Error("Flutterwave verification did not match the expected amount, currency, reference, or status.");
+ }
+ await markPaymentSuccessful(env,tx,String(data.id||providerTransactionId||""));return {success:true,status:"success",reference:tx.reference,amount:tx.amount,currency:tx.currency};
+}
+
+async function createPaymentCheckout(env,user,b,headers){
+ await paymentTables(env);const propertyId=clean(b.property_id,80),paymentType=clean(b.payment_type,30).toLowerCase();if(paymentType==="agent_subscription"){await paymentPricingTable(env);const price=await env.DB.prepare("SELECT currency,agent_access_monthly_amount FROM payment_pricing WHERE id=1").first(),settings=await env.DB.prepare("SELECT provider,mode,public_key,secret_cipher,webhook_cipher FROM payment_settings WHERE id=1").first();const baseAmount=Number(price?.agent_access_monthly_amount||0),baseCurrency=String(price?.currency||"NGN").toUpperCase();if(!Number.isFinite(baseAmount)||baseAmount<=0)return json({error:"Owner has not configured the monthly Agent Access fee."},409,headers);if(!settings||!env.PAYMENT_ENCRYPTION_KEY)return json({error:"Secure payment provider setup is required."},409,headers);const currency=settings.provider==="paystack"?"NGN":baseCurrency;let amount=baseAmount,rate=1,rateDate=new Date().toISOString().slice(0,10);if(baseCurrency!==currency){const fx=await paymentExchangeRate(baseCurrency,currency);amount=baseAmount*fx.rate;rate=fx.rate;rateDate=fx.date;}const minor=amountMinor(amount,currency);if(!Number.isSafeInteger(minor)||minor<=0)return json({error:"Monthly subscription amount is invalid."},400,headers);const bookingId=crypto.randomUUID(),reference="ACP-"+crypto.randomUUID().replace(/-/g,"").toUpperCase(),now=new Date().toISOString();await env.DB.prepare("INSERT INTO bookings (id,property_id,buyer_uid,seller_uid,booking_type,requested_for,payment_reference,status,created_at,updated_at) VALUES (?, 'AGENT_ACCESS',?,?, 'agent_subscription','30-day Agent Access',?,'awaiting_payment',?,?)").bind(bookingId,user.uid,user.uid,reference,now,now).run();await env.DB.prepare("INSERT INTO payment_transactions (id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,amount_minor,currency,base_amount,base_currency,fx_rate,fx_rate_date,secret_cipher,webhook_cipher,provider_transaction_id,status,created_at,updated_at,verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,'pending',?,?,NULL)").bind(crypto.randomUUID(),reference,settings.provider,settings.mode,paymentType,bookingId,"AGENT_ACCESS",user.uid,user.uid,amount,minor,currency,baseAmount,baseCurrency,rate,rateDate,settings.secret_cipher,settings.webhook_cipher,now,now).run();const secret=await decryptPaymentSecret(settings.secret_cipher,env),returnUrl=env.PAYMENT_RETURN_URL||"https://etidoz1.github.io/Agentcopilot-html/payment-result.html";let checkoutUrl="";if(settings.provider==="paystack"){const resp=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({email:user.email,amount:String(minor),currency,reference,callback_url:returnUrl,metadata:{booking_id:bookingId,payment_type:paymentType,subscription_days:30}})}),d=await resp.json().catch(()=>({}));if(!resp.ok||d.status!==true||!d.data?.authorization_url)throw new Error("Paystack checkout failed: "+clean(d.message||d.errors?.[0]?.message||("HTTP "+resp.status),220));checkoutUrl=d.data.authorization_url;}else{const resp=await fetch("https://api.flutterwave.com/v3/payments",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({tx_ref:reference,amount,currency,redirect_url:returnUrl,customer:{email:user.email},meta:{booking_id:bookingId,payment_type:paymentType,subscription_days:30},customizations:{title:"AgentCoPilot Agent Access",description:"30-day property scouting and agent contacts"}})}),d=await resp.json().catch(()=>({}));if(!resp.ok||d.status!=="success"||!d.data?.link)throw new Error("Flutterwave failed to create subscription checkout.");checkoutUrl=d.data.link;}return json({success:true,checkout_url:checkoutUrl,amount,currency,base_amount:baseAmount,base_currency:baseCurrency,fx_rate:rate,fx_rate_date:rateDate,payment_type:paymentType,subscription_days:30},200,headers);}if(!propertyId||!["viewing_fee","booking_deposit"].includes(paymentType))return json({error:"Choose a valid property and payment type."},400,headers);
+  const propertyDb=env.PROPERTY_DB||env.DB;
+ let property=await propertyDb.prepare("SELECT id,seller_uid,title,price,currency,status FROM properties WHERE id=? AND status='published'").bind(propertyId).first();
+ if(!property){
+  const marketplace="https://agentcopilot-html.miaj66355.workers.dev";
+  try{
+   const liveResponse=await fetch(marketplace+"/api/properties/"+encodeURIComponent(propertyId),{headers:{Accept:"application/json"}});
+   const liveData=await liveResponse.json().catch(()=>({}));
+   if(liveResponse.ok&&liveData.property&&String(liveData.property.status||"").toLowerCase()==="published"&&String(liveData.property.id)===propertyId)property=liveData.property;
+  }catch(error){console.error("Direct marketplace property lookup failed",error);}
+  if(!property){
+   try{
+    const listResponse=await fetch(marketplace+"/api/properties?limit=40",{headers:{Accept:"application/json"}});
+    const listData=await listResponse.json().catch(()=>({}));
+    const match=Array.isArray(listData.properties)?listData.properties.find(item=>String(item.id)===propertyId&&String(item.status||"").toLowerCase()==="published"):null;
+    if(listResponse.ok&&match)property=match;
+   }catch(error){console.error("Marketplace listing-feed fallback failed",error);}
+  }
+ }
+ if(!property)return json({error:"This AgentCoPilot listing could not be verified as currently published. Refresh the marketplace and try again."},404,headers);if(property.seller_uid===user.uid)return json({error:"You cannot pay to view or reserve your own listing."},400,headers);
+ const pricing=await env.DB.prepare("SELECT * FROM payment_pricing WHERE id=1").first();if(!pricing)return json({error:"The owner has not configured viewing fees and booking deposits."},409,headers);
+ const settings=await env.DB.prepare("SELECT provider,mode,public_key,secret_cipher,webhook_cipher FROM payment_settings WHERE id=1").first();
+ const propertyCurrency=String(property.currency||pricing.currency).toUpperCase();if(!/^[A-Z]{3}$/.test(propertyCurrency))return json({error:"This listing has an invalid payment currency. Please contact support."},409,headers);
+ const chargeCurrency=settings?.provider==="paystack"?(propertyCurrency==="USD"?"USD":"NGN"):propertyCurrency;
+ let baseAmount=0,baseCurrency=String(pricing.currency||"USD").toUpperCase(),fxRate=1,fxRateDate=new Date().toISOString().slice(0,10),fxSource="same_currency";
+ if(paymentType==="viewing_fee"){if(pricing.viewing_fee_mode==="fixed")baseAmount=Number(pricing.viewing_fee_amount);}
+ else if(pricing.deposit_mode==="fixed")baseAmount=Number(pricing.deposit_amount);
+ else if(pricing.deposit_mode==="percentage"){baseAmount=Number(property.price)*Number(pricing.deposit_amount)/100;baseCurrency=propertyCurrency;}
+ if(!Number.isFinite(baseAmount)||baseAmount<0)return json({error:"The configured payment amount is invalid."},409,headers);
+ if(baseAmount>0&&baseCurrency!==chargeCurrency){const fx=await paymentExchangeRate(baseCurrency,chargeCurrency);fxRate=fx.rate;fxRateDate=fx.date;fxSource=fx.source;}
+ const digits=currencyDigits(chargeCurrency),factor=Math.pow(10,digits);let amount=Math.round(baseAmount*fxRate*factor)/factor;
+ if(!Number.isFinite(amount))return json({error:"The converted payment amount is invalid."},400,headers);
+ const bookingId=crypto.randomUUID(),now=new Date().toISOString(),requestedFor=clean(b.requested_for,100);
+ if(amount<=0){await env.DB.prepare("INSERT INTO bookings (id,property_id,buyer_uid,seller_uid,booking_type,requested_for,payment_reference,status,created_at,updated_at) VALUES (?,?,?,?,?,?,NULL,'requested',?,?)").bind(bookingId,property.id,user.uid,property.seller_uid,paymentType,requestedFor,now,now).run();try{await notify(env,property.seller_uid,"viewing_request","New property request","A customer requested "+(paymentType==="viewing_fee"?"a viewing":"a booking")+" for "+property.title,"./leads.html");}catch(e){}return json({success:true,free:true,booking_id:bookingId,message:"Your request was sent. The seller will contact you to confirm the details."},201,headers);}
+ if(!settings)return json({error:"The owner has not connected a payment provider."},409,headers);if(!env.PAYMENT_ENCRYPTION_KEY)return json({error:"Secure payment credential storage is not configured."},503,headers);
+ const reference="ACP-"+crypto.randomUUID().replace(/-/g,"").toUpperCase(),minor=amountMinor(amount,chargeCurrency);if(!Number.isSafeInteger(minor)||minor<=0)return json({error:"The calculated payment amount is invalid."},400,headers);
+ await env.DB.prepare("INSERT INTO bookings (id,property_id,buyer_uid,seller_uid,booking_type,requested_for,payment_reference,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'awaiting_payment',?,?)").bind(bookingId,property.id,user.uid,property.seller_uid,paymentType,requestedFor,reference,now,now).run();
+ await env.DB.prepare("INSERT INTO payment_transactions (id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,amount_minor,currency,base_amount,base_currency,fx_rate,fx_rate_date,secret_cipher,webhook_cipher,provider_transaction_id,status,created_at,updated_at,verified_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,'pending',?,?,NULL)").bind(crypto.randomUUID(),reference,settings.provider,settings.mode,paymentType,bookingId,property.id,user.uid,property.seller_uid,amount,minor,chargeCurrency,baseAmount,baseCurrency,fxRate,fxRateDate,settings.secret_cipher,settings.webhook_cipher,now,now).run();
+ const returnUrl=env.PAYMENT_RETURN_URL||"https://etidoz1.github.io/Agentcopilot-html/payment-result.html";let checkoutUrl="";
+ try{
+ const secret=await decryptPaymentSecret(settings.secret_cipher,env);
+ if(settings.provider==="paystack"){
+  const response=await fetch("https://api.paystack.co/transaction/initialize",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({email:user.email,amount:String(minor),currency:chargeCurrency,reference,callback_url:returnUrl,metadata:{booking_id:bookingId,property_id:property.id,payment_type:paymentType}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!==true||!payload.data?.authorization_url)throw new Error("Paystack could not create a checkout session.");checkoutUrl=payload.data.authorization_url;
+ }else{
+  const response=await fetch("https://api.flutterwave.com/v3/payments",{method:"POST",headers:{Authorization:"Bearer "+secret,"Content-Type":"application/json"},body:JSON.stringify({tx_ref:reference,amount,currency:chargeCurrency,redirect_url:returnUrl,customer:{email:user.email},meta:{booking_id:bookingId,property_id:property.id,payment_type:paymentType},customizations:{title:"AgentCoPilot property payment",description:paymentType==="viewing_fee"?"Property viewing fee":"Property booking deposit"}})});const payload=await response.json().catch(()=>({}));if(!response.ok||payload.status!=="success"||!payload.data?.link)throw new Error("Flutterwave could not create a checkout session.");checkoutUrl=payload.data.link;
+ }
+ }catch(error){const failedAt=new Date().toISOString();await env.DB.prepare("UPDATE payment_transactions SET status='checkout_failed',updated_at=? WHERE reference=? AND status='pending'").bind(failedAt,reference).run();await env.DB.prepare("UPDATE bookings SET status='checkout_failed',updated_at=? WHERE id=? AND status='awaiting_payment'").bind(failedAt,bookingId).run();throw error;}
+ return json({success:true,checkout_url:checkoutUrl,reference,amount,currency:chargeCurrency,base_amount:baseAmount,base_currency:baseCurrency,fx_rate:fxRate,fx_rate_date:fxRateDate,fx_source:fxSource,payment_type:paymentType},200,headers);
+}
+
 export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExternalListings(env,20));},async fetch(request,env){
  const origin=request.headers.get("Origin")||"";const allowed=(env.ALLOWED_ORIGIN||"https://etidoz1.github.io").split(",").map(x=>x.trim()).filter(Boolean);const headers=cors(origin,allowed);if(request.method==="OPTIONS")return origin&&!allowed.includes(origin)?json({error:"Origin not allowed."},403):new Response(null,{status:204,headers});
  const url=new URL(request.url);if(url.pathname==="/health"&&request.method==="GET")return json({status:"ok",service:"AgentCoPilot property marketplace",database:!!env.DB,ai:!!env.GEMINI_API_KEY,global_search:!!env.TAVILY_API_KEY},200,headers);
  if(origin&&!allowed.includes(origin))return json({error:"Origin not allowed."},403,headers);
  try{
+  if(url.pathname==="/api/payments/checkout"&&request.method==="POST"){
+   const user=await currentUser(request,env);if(!user)return json({error:"Please sign in before making a payment."},401,headers);if(!user.email)return json({error:"Your account needs a valid email address for payment checkout."},400,headers);const b=await request.json();return await createPaymentCheckout(env,user,b,headers);
+  }
+if(url.pathname==="/api/payments/verify"&&request.method==="GET"){
+   const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to verify your payment."},401,headers);const reference=clean(url.searchParams.get("reference"),100),providerTransactionId=clean(url.searchParams.get("transaction_id"),100);if(!reference)return json({error:"Payment reference is required."},400,headers);await paymentTables(env);const tx=await env.DB.prepare("SELECT * FROM payment_transactions WHERE reference=? AND buyer_uid=?").bind(reference,user.uid).first();if(!tx)return json({error:"Payment record not found for this account."},404,headers);if(tx.status==="success")return json({success:true,status:"success",reference:tx.reference,amount:tx.amount,currency:tx.currency},200,headers);try{return json(await verifyPaymentRecord(env,tx,providerTransactionId),200,headers);}catch(e){return json({success:false,status:tx.status,error:e.message},409,headers);}
+  }
+if(url.pathname==="/api/webhooks/paystack"&&request.method==="POST"){
+   await paymentTables(env);const raw=await request.text();let event;try{event=JSON.parse(raw);}catch{return json({error:"Invalid webhook payload."},400,headers);}const reference=clean(event?.data?.reference,100);if(!reference)return json({received:true},200,headers);const tx=await env.DB.prepare("SELECT * FROM payment_transactions WHERE reference=? AND provider='paystack'").bind(reference).first();if(!tx)return json({received:true},200,headers);const secret=await decryptPaymentSecret(tx.secret_cipher,env);let valid=false;const modern=request.headers.get("Paystack-Signature")||"";if(modern&&tx.webhook_cipher){const webhookSecret=await decryptPaymentSecret(tx.webhook_cipher,env);let timestamp="",signatures=[];for(const part of modern.split(",")){const [k,...rest]=part.trim().split("=");const value=rest.join("=");if(k==="t")timestamp=value;if(k==="v1")signatures.push(value.includes(":")?value.slice(value.indexOf(":")+1):value);}const t=Number(timestamp);if(Number.isFinite(t)&&Math.abs(Math.floor(Date.now()/1000)-t)<=300){const expected=await hmacHex(webhookSecret,timestamp+"."+raw);valid=signatures.some(sig=>safeEqual(sig.toLowerCase(),expected));}}if(!valid){const legacy=request.headers.get("x-paystack-signature")||"";if(legacy){const expected=await hmacHex(secret,raw);valid=safeEqual(legacy.toLowerCase(),expected);}}if(!valid)return json({error:"Invalid Paystack webhook signature."},401,headers);if(event.event==="charge.success")try{await verifyPaymentRecord(env,tx,"");}catch(e){console.error("Paystack webhook verification failed",e);return json({error:"Paystack transaction verification failed. Provider may retry this webhook."},503,headers);}return json({received:true},200,headers);
+  }
+if(url.pathname==="/api/webhooks/flutterwave"&&request.method==="POST"){
+   await paymentTables(env);const raw=await request.text();let event;try{event=JSON.parse(raw);}catch{return json({error:"Invalid webhook payload."},400,headers);}
+   const data=event?.data||{},reference=clean(data.tx_ref||data.reference,100);if(!reference)return json({received:true},200,headers);
+   const tx=await env.DB.prepare("SELECT * FROM payment_transactions WHERE reference=? AND provider='flutterwave'").bind(reference).first();if(!tx)return json({received:true},200,headers);
+   // Flutterwave sends the configured webhook secret hash verbatim in `verif-hash`; it is not an HMAC of the request body.
+   const webhookSecret=await decryptPaymentSecret(tx.webhook_cipher,env),signature=request.headers.get("verif-hash")||"";
+   if(!safeEqual(signature,webhookSecret))return json({error:"Invalid Flutterwave webhook signature."},401,headers);
+   if(data.status==="successful"||event.type==="charge.completed")try{await verifyPaymentRecord(env,tx,String(data.id||""));}catch(e){console.error("Flutterwave webhook verification failed",e);return json({error:"Flutterwave transaction verification failed. Provider may retry this webhook."},503,headers);}
+   return json({received:true},200,headers);
+  }
+if(url.pathname==="/api/payments/history"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to view payment history."},401,headers);
+    await paymentTables(env);const admin=await isAdmin(user,env);
+    const sql="SELECT id,reference,provider,mode,payment_type,booking_id,property_id,buyer_uid,seller_uid,amount,currency,status,created_at,updated_at,verified_at,base_amount,base_currency,fx_rate,fx_rate_date FROM payment_transactions "+(admin?"":"WHERE seller_uid=? OR buyer_uid=? ")+"ORDER BY created_at DESC LIMIT 100";
+    const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();
+    const propertyDb=env.PROPERTY_DB||env.DB,payments=[];
+    for(const tx of rows.results||[]){let property=null;try{property=await propertyDb.prepare("SELECT title,seller_name FROM properties WHERE id=?").bind(tx.property_id).first();}catch(e){console.warn("Payment property details unavailable",tx.property_id,e);}
+     payments.push({...tx,property_title:property?.title||"Property no longer available",seller_name:property?.seller_name||""});
+    }
+    return json({payments,scope:admin?"all":"own"},200,headers);
+   }
+if(url.pathname==="/api/owner/payment-pricing"&&(request.method==="GET"||request.method==="PUT")){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if((await userRole(user,env))!=="owner")return json({error:"Only the platform owner can change payment pricing."},403,headers);await paymentPricingTable(env);
+    if(request.method==="GET"){const row=await env.DB.prepare("SELECT currency,viewing_fee_mode,viewing_fee_amount,deposit_mode,deposit_amount,agent_access_monthly_amount,updated_at FROM payment_pricing WHERE id=1").first();return json({pricing:row||{currency:"NGN",viewing_fee_mode:"free",viewing_fee_amount:0,deposit_mode:"off",deposit_amount:0,agent_access_monthly_amount:0}},200,headers);}
+    const b=await request.json(),currency=clean(b.currency,3).toUpperCase(),viewMode=clean(b.viewing_fee_mode,10).toLowerCase(),depositMode=clean(b.deposit_mode,12).toLowerCase(),viewAmount=Number(b.viewing_fee_amount),depositAmount=Number(b.deposit_amount),agentAccessAmount=Number(b.agent_access_monthly_amount??0);
+    if(!/^[A-Z]{3}$/.test(currency)||!["free","fixed"].includes(viewMode)||!["off","fixed","percentage"].includes(depositMode)||!Number.isFinite(viewAmount)||!Number.isFinite(depositAmount)||!Number.isFinite(agentAccessAmount)||viewAmount<0||depositAmount<0||agentAccessAmount<0||viewAmount>1000000000||depositAmount>1000000000||agentAccessAmount>1000000000)return json({error:"Enter a valid currency and non-negative fee/deposit values."},400,headers);
+    if(viewMode==="fixed"&&viewAmount<=0)return json({error:"A fixed viewing fee must be greater than zero."},400,headers);
+    if(depositMode==="fixed"&&depositAmount<=0)return json({error:"A fixed booking deposit must be greater than zero."},400,headers);
+    if(depositMode==="percentage"&&(depositAmount<=0||depositAmount>100))return json({error:"The deposit percentage must be greater than 0 and no more than 100."},400,headers);
+    const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_pricing (id,currency,viewing_fee_mode,viewing_fee_amount,deposit_mode,deposit_amount,agent_access_monthly_amount,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET currency=excluded.currency,viewing_fee_mode=excluded.viewing_fee_mode,viewing_fee_amount=excluded.viewing_fee_amount,deposit_mode=excluded.deposit_mode,deposit_amount=excluded.deposit_amount,agent_access_monthly_amount=excluded.agent_access_monthly_amount,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(currency,viewMode,viewMode==="fixed"?viewAmount:0,depositMode,depositMode==="off"?0:depositAmount,agentAccessAmount,user.uid,now).run();
+    return json({success:true,message:"Viewing fee and booking deposit rules saved.",pricing:{currency,viewing_fee_mode:viewMode,viewing_fee_amount:viewMode==="fixed"?viewAmount:0,deposit_mode:depositMode,deposit_amount:depositMode==="off"?0:depositAmount,agent_access_monthly_amount:agentAccessAmount},updated_at:now},200,headers);
+   }
+if(url.pathname==="/api/owner/payment-settings"&&(request.method==="GET"||request.method==="PUT")){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if((await userRole(user,env))!=="owner")return json({error:"Only the platform owner can change payment credentials."},403,headers);await paymentTables(env);
+    if(request.method==="GET"){const row=await env.DB.prepare("SELECT provider,mode,public_key,updated_at FROM payment_settings WHERE id=1").first();let encryptionReady=false;try{await paymentCryptoKey(env);encryptionReady=true;}catch{}return json({configured:!!row,provider:row?.provider||"",mode:row?.mode||"test",public_key:row?.public_key||"",updated_at:row?.updated_at||null,encryption_ready:encryptionReady},200,headers);}
+    const b=await request.json(),provider=clean(b.provider,20).toLowerCase(),mode=clean(b.mode,10).toLowerCase(),publicKey=typeof b.public_key==="string"?b.public_key.trim().slice(0,240):"",secretKey=typeof b.secret_key==="string"?b.secret_key.trim():"",webhookSecret=typeof b.webhook_secret==="string"?b.webhook_secret.trim():"";
+    if(!["paystack","flutterwave"].includes(provider)||!["test","live"].includes(mode)||!publicKey||publicKey.length>240||secretKey.length>500||webhookSecret.length>500)return json({error:"Choose a provider and mode, and enter a valid public key. New or changed provider credentials must be supplied."},400,headers);
+    const existing=await env.DB.prepare("SELECT provider,mode,public_key,secret_cipher,webhook_cipher FROM payment_settings WHERE id=1").first();
+    const sameConnection=existing&&existing.provider===provider&&existing.mode===mode&&existing.public_key===publicKey;
+    if((!sameConnection||!existing.secret_cipher)&&!secretKey)return json({error:"Enter the provider secret key when connecting a new provider or switching test/live mode."},400,headers);
+    if(provider==="flutterwave"&&(!sameConnection||!existing.webhook_cipher)&&!webhookSecret)return json({error:"Enter the Flutterwave webhook secret when connecting or switching mode."},400,headers);
+    let secretCipher=existing?.secret_cipher,webhookCipher=existing?.webhook_cipher??"";try{if(secretKey)secretCipher=await encryptPaymentSecret(secretKey,env);if(webhookSecret)webhookCipher=await encryptPaymentSecret(webhookSecret,env);else if(provider==="paystack"&&!sameConnection)webhookCipher="";}catch(e){return json({error:e.message},503,headers);}
+    const now=new Date().toISOString();await env.DB.prepare("INSERT INTO payment_settings (id,provider,mode,public_key,secret_cipher,webhook_cipher,updated_by,updated_at) VALUES (1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,mode=excluded.mode,public_key=excluded.public_key,secret_cipher=excluded.secret_cipher,webhook_cipher=excluded.webhook_cipher,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(provider,mode,publicKey,secretCipher,webhookCipher,user.uid,now).run();
+    return json({success:true,message:"Payment provider credentials saved securely.",provider,mode,updated_at:now},200,headers);
+   }
   if(url.pathname==="/api/properties"&&request.method==="GET"){const rows=await searchProperties(env,url.searchParams,Number(url.searchParams.get("limit")||24));return json({properties:rows},200,headers);}
   if(url.pathname==="/api/properties"&&request.method==="POST"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in again before publishing."},401,headers);const b=await request.json();
