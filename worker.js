@@ -88,6 +88,8 @@ function filters(params){
  const beds=Number(params.get("bedrooms"));if(Number.isInteger(beds)&&beds>0)add("p.bedrooms >= ?",String(beds));
  return {where:c.join(" AND "),values:v};
 }
+async function propertyAnalyticsTable(env){await env.DB.prepare("CREATE TABLE IF NOT EXISTS property_analytics (property_id TEXT NOT NULL,visitor_hash TEXT NOT NULL,event_type TEXT NOT NULL CHECK(event_type IN ('view','click')),first_seen_at TEXT NOT NULL,PRIMARY KEY(property_id,visitor_hash,event_type))").run();}
+async function hashVisitor(value){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('');}
 async function searchProperties(env,params,limit=24){
  const f=filters(params);const sql="SELECT p.*,(SELECT i.image_data FROM property_images i WHERE i.property_id=p.id ORDER BY i.sort_order LIMIT 1) AS cover_image,(SELECT COUNT(*) FROM property_images i WHERE i.property_id=p.id) AS image_count FROM properties p WHERE "+f.where+" ORDER BY p.created_at DESC LIMIT ?";
  const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return (r.results||[]).map(({seller_phone,seller_email,...publicRow})=>intelligenceProcessRecord(publicRow));
@@ -246,9 +248,16 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
    photos.forEach((photo,i)=>statements.push(env.DB.prepare("INSERT INTO property_images (id,property_id,image_data,mime_type,sort_order,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(),id,photo,photo.slice(5,photo.indexOf(";")),i,now)));
    await env.DB.batch(statements);try{await notify(env,user.uid,"listing_created","Property published",title+" is now live on AgentCoPilot.","./ai-tools.html#seller-panel");}catch(e){console.error("Listing notification failed",e);}return json({success:true,property_id:id,message:"Your property has been published."},201,headers);
   }
+  if(url.pathname.startsWith("/api/property-metrics/")&&request.method==="POST"){
+   const id=decodeURIComponent(url.pathname.split("/").pop()||""),b=await request.json().catch(()=>({})),event=clean(b.event,8),visitor=clean(b.visitor_id,100);
+   if(!id||!['view','click'].includes(event)||!/^[A-Za-z0-9_-]{20,100}$/.test(visitor))return json({error:"Invalid property metric event."},400,headers);
+   const property=await env.DB.prepare("SELECT id,seller_uid FROM properties WHERE id=? AND status='published'").bind(id).first();if(!property)return json({error:"Property not found."},404,headers);
+   const authHeader=request.headers.get("Authorization");if(authHeader){const viewer=await currentUser(request,env);if(viewer&&viewer.uid===property.seller_uid)return json({success:true,tracked:false},200,headers);}
+   await propertyAnalyticsTable(env);const visitorHash=await hashVisitor(visitor);await env.DB.prepare("INSERT OR IGNORE INTO property_analytics (property_id,visitor_hash,event_type,first_seen_at) VALUES (?,?,?,?)").bind(id,visitorHash,event,new Date().toISOString()).run();return json({success:true,tracked:true},200,headers);
+  }
   if(url.pathname==="/api/my/properties"&&request.method==="GET"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
-   const rows=await env.DB.prepare("SELECT id,title,purpose,property_type,price,currency,city,country,status,created_at,updated_at FROM properties WHERE seller_uid=? AND status!='deleted' ORDER BY created_at DESC LIMIT 100").bind(user.uid).all();
+    await propertyAnalyticsTable(env);const rows=await env.DB.prepare("SELECT p.id,p.title,p.purpose,p.property_type,p.price,p.currency,p.city,p.country,p.status,p.created_at,p.updated_at,(SELECT COUNT(*) FROM property_analytics a WHERE a.property_id=p.id AND a.event_type='view') AS view_count,(SELECT COUNT(*) FROM property_analytics a WHERE a.property_id=p.id AND a.event_type='click') AS click_count FROM properties p WHERE p.seller_uid=? AND p.status!='deleted' ORDER BY p.created_at DESC LIMIT 100").bind(user.uid).all();
    return json({properties:rows.results||[]},200,headers);
   }
   if(url.pathname.startsWith("/api/my/properties/")&&(request.method==="PATCH"||request.method==="DELETE")){
