@@ -404,3 +404,7 @@ html[data-theme="light"] .account-page .profile-fields>div{background:#fff!impor
 html[data-theme="light"] .account-page .profile-fields dt{color:#64748b!important}
 html[data-theme="light"] .account-page .profile-fields dd{color:#172033!important;font-weight:750!important}
 html[data-theme="light"] .account-page .profile-security-note{color:#64748b!important}
+
+/* Ensure the account page title remains dark and legible in light mode. */
+html[data-theme="light"] .account-page h1{color:#0f172a!important;-webkit-text-fill-color:#0f172a!important;font-weight:800!important;opacity:1!important}
+html[data-theme="light"] .account-page .account-eyebrow{color:#475569!important;-webkit-text-fill-color:#475569!important}
