@@ -371,6 +371,12 @@ html[data-theme="light"] .sidebar .logo-text,html[data-theme="light"] .sidebar .
 html[data-theme="light"] .sidebar .nav-menu .nav-item{color:#475569!important;background:transparent!important;border-color:transparent!important}
 html[data-theme="light"] .sidebar .nav-menu .nav-item:hover,html[data-theme="light"] .sidebar .nav-menu .nav-item.active{background:#ecfdf5!important;color:#047857!important;border-color:#d1fae5!important}
 html[data-theme="light"] .sidebar .nav-menu .nav-item svg{color:inherit!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="./profile.html"],
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="profile.html"]{color:#334155!important;-webkit-text-fill-color:#334155!important;font-weight:650!important;opacity:1!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="./profile.html"] *,
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="profile.html"] *{color:inherit!important;-webkit-text-fill-color:inherit!important;opacity:1!important}
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="./profile.html"].active,
+html[data-theme="light"] .sidebar .nav-menu .nav-item[href="profile.html"].active{color:#047857!important;-webkit-text-fill-color:#047857!important;background:#ecfdf5!important}
 html[data-theme="light"] .sidebar .logout-btn{background:#f8fafc!important;color:#334155!important;border-color:#e2e8f0!important}
 html[data-theme="light"] .menu-toggle{background:transparent!important;background-color:transparent!important;color:#334155!important;border-color:transparent!important}
 html[data-theme="light"] .menu-toggle svg{color:#334155!important;stroke:#334155!important}
