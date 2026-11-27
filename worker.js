@@ -50,8 +50,13 @@ function intelligenceFieldType(key){
 }
 function redactContactText(value){
  if(typeof value!=="string")return value;
- return value.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,"[contact protected]")
-  .replace(/(?<!\w)(?:\+?\d{1,3}[\s().-]?)?(?:0\d{9,10}|[1-9]\d{9,11})(?!\w)/g,"[contact protected]");
+ return value
+  .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,"[contact protected]")
+  // Protect phone numbers even when digits are grouped with spaces, brackets, dots or hyphens.
+  .replace(/(?<![\w])\+?(?:[\s().-]*\d){10,15}(?![\w])/g,match=>{
+   const digits=match.replace(/\D/g,"");
+   return digits.length>=10&&digits.length<=15?"[contact protected]":match;
+  });
 }
 function intelligenceProcessRecord(record){
  if(!record||typeof record!=="object"||Array.isArray(record))return record;
