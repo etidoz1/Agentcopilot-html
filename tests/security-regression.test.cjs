@@ -74,3 +74,13 @@ test('package manifest and lockfile dependency declarations are consistent', () 
   const result = spawnSync(process.execPath, ['--check', path.join(root, 'server.js')], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
 });
+
+
+test('legacy Render Gemini endpoint requires Firebase auth and limits quota use', () => {
+  const server = read('server.js');
+  assert.ok(server.includes("app.post('/api/generate', requireFirebaseUser, limitGeneration"));
+  assert.ok(server.includes('crypto.verify(\'RSA-SHA256\''));
+  assert.ok(server.includes('entry.count >= 20'));
+  assert.ok(server.includes("['https://etidoz1.github.io']"));
+  assert.ok(!server.includes(': true'));
+});
