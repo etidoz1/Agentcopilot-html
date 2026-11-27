@@ -28,6 +28,15 @@ test('public property detail never serializes seller contact fields', () => {
   assert.ok(marketplace.includes('const {seller_phone,seller_email,...publicProperty}=row'));
 });
 
+test('listing generation sanitizes prompt before Gemini and output before response', () => {
+  for (const name of ['worker.js', 'payment-worker-staging.js']) {
+    const source = read(name);
+    assert.ok(source.includes('const safePrompt=redactContactText(prompt)'), name + ' prompt');
+    assert.ok(source.includes('parts:[{text:safePrompt}]'), name + ' provider payload');
+    assert.ok(source.includes('return redactContactText(out)'), name + ' response');
+  }
+});
+
 test('Gemini listing generation requires a verified signed-in user', () => {
   for (const name of ['worker.js', 'payment-worker-staging.js']) {
     const source = read(name);

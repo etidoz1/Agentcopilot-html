@@ -194,9 +194,10 @@ async function searchProperties(env,params,limit=24){
  const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return r.results||[];
 }
 async function aiSearch(env,text){
+ const safePrompt=redactContactText(prompt);
  const model=env.GEMINI_MODEL||DEFAULT_MODEL;
  const prompt="Convert this buyer property request into JSON only with keys purpose (sale|rent|null), country, city, state (or province/region), property_type, min_price, max_price, currency (ISO 4217 code such as USD, GBP, EUR, NGN, CAD, AUD, AED), bedrooms, features (array). Use null when unspecified. Interpret budgets in the currency stated or reasonably indicated by the location; never assume naira for other countries. Do not invent. Request: "+text;
- const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},body:JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:.1,responseMimeType:"application/json",maxOutputTokens:300}})});
+ const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},body:JSON.stringify({contents:[{role:"user",parts:[{text:safePrompt}]}],generationConfig:{temperature:.1,responseMimeType:"application/json",maxOutputTokens:300}})});
  const p=await r.json();if(!r.ok)throw new Error("AI search is temporarily unavailable.");const raw=(p.candidates?.[0]?.content?.parts||[]).map(x=>x.text||"").join("").trim();const criteria=JSON.parse(raw);const params=new URLSearchParams();
  ["purpose","country","city","state","property_type","min_price","max_price","currency","bedrooms"].forEach(k=>{if(criteria[k]!==null&&criteria[k]!==undefined&&criteria[k]!=="")params.set(k,String(criteria[k]));});
  return {criteria,params};
@@ -215,7 +216,7 @@ function filterExtractedPropertyImages(images,pageUrl){
   }catch{}
   if(out.length>=6)break;
  }
- return out;
+ return redactContactText(out);
 }
 async function tavilyListingImages(env,items){
  const pending=items.filter(x=>!x.image_urls?.length&&x.url).slice(0,8);
