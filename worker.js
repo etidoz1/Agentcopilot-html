@@ -50,7 +50,7 @@ function filters(params){
 }
 async function searchProperties(env,params,limit=24){
  const f=filters(params);const sql="SELECT p.*,(SELECT i.image_data FROM property_images i WHERE i.property_id=p.id ORDER BY i.sort_order LIMIT 1) AS cover_image,(SELECT COUNT(*) FROM property_images i WHERE i.property_id=p.id) AS image_count FROM properties p WHERE "+f.where+" ORDER BY p.created_at DESC LIMIT ?";
- const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return r.results||[];
+ const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return (r.results||[]).map(({seller_phone,seller_email,...publicRow})=>publicRow);
 }
 async function aiSearch(env,text){
  const model=env.GEMINI_MODEL||DEFAULT_MODEL;
@@ -161,6 +161,8 @@ async function listingCopy(env,prompt){
  const r=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":env.GEMINI_API_KEY},body:JSON.stringify({systemInstruction:{parts:[{text:instruction}]},contents:[{role:"user",parts:[{text:prompt}]}],generationConfig:{temperature:.25,topP:.8,maxOutputTokens:700}})});
  const p=await r.json();if(!r.ok)throw new Error(r.status===429?"The AI service is temporarily busy. Please try again shortly.":"The AI service could not complete this request.");const out=(p.candidates?.[0]?.content?.parts||[]).map(x=>x.text||"").join("").trim();if(!out)throw new Error("The AI returned an empty response.");return out;
 }
+async function agentAccessTable(env){await env.DB.prepare("CREATE TABLE IF NOT EXISTS agent_subscriptions (user_uid TEXT PRIMARY KEY,status TEXT NOT NULL,started_at TEXT NOT NULL,expires_at TEXT NOT NULL,last_reference TEXT NOT NULL,updated_at TEXT NOT NULL)").run();}
+async function hasAgentAccess(env,uid){await agentAccessTable(env);const row=await env.DB.prepare("SELECT expires_at,status FROM agent_subscriptions WHERE user_uid=?").bind(uid).first();return !!row&&row.status==='active'&&Date.parse(row.expires_at)>Date.now();}
 export default {async fetch(request,env){
  const origin=request.headers.get("Origin")||"";const allowed=(env.ALLOWED_ORIGIN||"https://etidoz1.github.io").split(",").map(x=>x.trim()).filter(Boolean);const headers=cors(origin,allowed);if(request.method==="OPTIONS")return origin&&!allowed.includes(origin)?json({error:"Origin not allowed."},403):new Response(null,{status:204,headers});
  const url=new URL(request.url);if(url.pathname==="/health"&&request.method==="GET")return json({status:"ok",service:"AgentCoPilot property marketplace",database:!!env.DB,ai:!!env.GEMINI_API_KEY,global_search:!!env.TAVILY_API_KEY},200,headers);
@@ -203,9 +205,11 @@ export default {async fetch(request,env){
    await env.DB.prepare("UPDATE properties SET status='deleted',updated_at=? WHERE id=? AND seller_uid=? AND status='sold'").bind(now,id,user.uid).run();
    return json({success:true,status:"deleted",message:"Listing deleted from your dashboard and marketplace. Payment and transaction records have been preserved."},200,headers);
   }
-  if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
+  if(url.pathname==="/api/agent-access/status"&&request.method==="GET"){const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);await agentAccessTable(env);const row=await env.DB.prepare("SELECT status,started_at,expires_at FROM agent_subscriptions WHERE user_uid=?").bind(user.uid).first();const active=!!row&&row.status==="active"&&Date.parse(row.expires_at)>Date.now();return json({active,expires_at:active?row.expires_at:null,days_remaining:active?Math.max(0,Math.ceil((Date.parse(row.expires_at)-Date.now())/86400000)):0},200,headers);}
+   if(url.pathname.startsWith("/api/properties/")&&url.pathname.endsWith("/contact")&&request.method==="GET"){const user=await currentUser(request,env);if(!user)return json({error:"Sign in to access agent contacts."},401,headers);if(!await hasAgentAccess(env,user.uid))return json({error:"A paid 30-day Agent Access subscription is required.",subscription_required:true},402,headers);const id=decodeURIComponent(url.pathname.split("/").slice(-2)[0]||"");const row=await env.DB.prepare("SELECT id,seller_name,seller_phone,seller_email FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);return json({contact:row},200,headers);}
+   if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
    const id=url.pathname.split("/").pop(),row=await env.DB.prepare("SELECT * FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);
-   const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:row,images:imgs.results||[]},200,headers);
+   const {seller_phone,seller_email,...publicProperty}=row;const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:publicProperty,images:imgs.results||[]},200,headers);
   }
   if(url.pathname==="/api/ai-search"&&request.method==="POST"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to search properties."},401,headers);const b=await request.json(),q=clean(b.query,1200);if(q.length<8)return json({error:"Describe the property you want in more detail."},400,headers);
