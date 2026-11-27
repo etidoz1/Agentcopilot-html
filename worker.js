@@ -163,7 +163,31 @@ async function listingCopy(env,prompt){
 }
 async function agentAccessTable(env){await env.DB.prepare("CREATE TABLE IF NOT EXISTS agent_subscriptions (user_uid TEXT PRIMARY KEY,status TEXT NOT NULL,started_at TEXT NOT NULL,expires_at TEXT NOT NULL,last_reference TEXT NOT NULL,updated_at TEXT NOT NULL)").run();}
 async function hasAgentAccess(env,uid){await agentAccessTable(env);const row=await env.DB.prepare("SELECT expires_at,status FROM agent_subscriptions WHERE user_uid=?").bind(uid).first();return !!row&&row.status==='active'&&Date.parse(row.expires_at)>Date.now();}
-export default {async fetch(request,env){
+async function recheckExternalListings(env, limit=20){
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS external_listing_verification (id TEXT PRIMARY KEY,url TEXT NOT NULL,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'unchecked',last_checked_at TEXT,next_check_at TEXT,check_count INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)").run();
+ const now=new Date().toISOString();
+ const due=await env.DB.prepare("SELECT id,url,title,check_count FROM external_listing_verification WHERE next_check_at IS NULL OR next_check_at<=? ORDER BY COALESCE(next_check_at,'') LIMIT ?").bind(now,limit).all();
+ let checked=0;
+ for(const item of (due.results||[])){
+  let status='uncertain',delay=6*60*60*1000;
+  try{
+   const response=await fetch(item.url,{method:'GET',redirect:'follow',headers:{'User-Agent':'AgentCoPilot-ListingCheck/1.0 (+availability status check)','Range':'bytes=0-18000'},signal:AbortSignal.timeout(12000)});
+   const finalUrl=response.url||item.url;
+   if(response.status===404||response.status===410){status='removed';delay=7*24*60*60*1000;}
+   else if(response.status===401||response.status===403||response.status===429||response.status>=500){status='uncertain';delay=24*60*60*1000;}
+   else if(response.ok){
+    const body=(await response.text()).slice(0,22000).toLowerCase();
+    if(/\b(sold|rented|let agreed|property has been let|no longer available|listing withdrawn|property withdrawn|listing removed)\b/.test(body)){status='unavailable';delay=7*24*60*60*1000;}
+    else {status='source_page_live_unconfirmed';delay=24*60*60*1000;}
+   }else {status='uncertain';delay=24*60*60*1000;}
+   if(finalUrl!==item.url)await env.DB.prepare("UPDATE external_listing_verification SET url=? WHERE id=?").bind(finalUrl,item.id).run();
+  }catch(error){status='uncertain';delay=24*60*60*1000;}
+  const checkedAt=new Date().toISOString(),nextAt=new Date(Date.now()+delay).toISOString();
+  await env.DB.prepare("UPDATE external_listing_verification SET status=?,last_checked_at=?,next_check_at=?,check_count=check_count+1,updated_at=? WHERE id=?").bind(status,checkedAt,nextAt,checkedAt,item.id).run();checked++;
+ }
+ return {checked};
+}
+export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExternalListings(env,20));},async fetch(request,env){
  const origin=request.headers.get("Origin")||"";const allowed=(env.ALLOWED_ORIGIN||"https://etidoz1.github.io").split(",").map(x=>x.trim()).filter(Boolean);const headers=cors(origin,allowed);if(request.method==="OPTIONS")return origin&&!allowed.includes(origin)?json({error:"Origin not allowed."},403):new Response(null,{status:204,headers});
  const url=new URL(request.url);if(url.pathname==="/health"&&request.method==="GET")return json({status:"ok",service:"AgentCoPilot property marketplace",database:!!env.DB,ai:!!env.GEMINI_API_KEY,global_search:!!env.TAVILY_API_KEY},200,headers);
  if(origin&&!allowed.includes(origin))return json({error:"Origin not allowed."},403,headers);
@@ -221,7 +245,7 @@ export default {async fetch(request,env){
    const results=rows.map(row=>{let score=0;const reasons=[];if(parsed.criteria.city&&String(row.city||"").toLowerCase().includes(String(parsed.criteria.city).toLowerCase())){score+=30;reasons.push("Preferred location");}if(parsed.criteria.property_type&&String(row.property_type||"").toLowerCase().includes(String(parsed.criteria.property_type).toLowerCase())){score+=20;reasons.push("Property type");}if(parsed.criteria.bedrooms&&Number(row.bedrooms)>=Number(parsed.criteria.bedrooms)){score+=15;reasons.push("Bedroom requirement");}if(parsed.criteria.max_price&&parsed.criteria.currency&&row.currency===String(parsed.criteria.currency).toUpperCase()&&Number(row.price)<=Number(parsed.criteria.max_price)){score+=20;reasons.push("Within budget");}if(parsed.criteria.purpose&&row.purpose===parsed.criteria.purpose){score+=15;reasons.push("Sale/rent preference");}const fs=JSON.parse(row.features||"[]").map(x=>String(x).toLowerCase());features.forEach(f=>{if(fs.some(x=>x.includes(String(f).toLowerCase()))){score+=5;reasons.push("Feature: "+f);}});return Object.assign({},row,{match_score:Math.min(score,100),match_reasons:reasons});}).sort((a,b)=>b.match_score-a.match_score);
    const minimumInternalResults=5;let external=[],externalFallbackUsed=false,externalSearchStatus="not_needed";
    if(results.length<minimumInternalResults){externalFallbackUsed=true;externalSearchStatus="searching";try{const found=await externalPropertySearch(env,q,parsed.criteria);external=found.slice(0,Math.max(1,minimumInternalResults-results.length));externalSearchStatus="completed";}catch(error){externalSearchStatus="unavailable";console.warn("External fallback search unavailable; preserving AgentCoPilot results",error);}}
-   if(external.length){await env.DB.prepare("CREATE TABLE IF NOT EXISTS external_listing_cache (id TEXT PRIMARY KEY,user_uid TEXT NOT NULL,url TEXT NOT NULL,title TEXT NOT NULL,expires_at TEXT NOT NULL)").run();const expiry=new Date(Date.now()+30*60*1000).toISOString();for(const item of external){const cacheId=crypto.randomUUID();await env.DB.prepare("INSERT INTO external_listing_cache (id,user_uid,url,title,expires_at) VALUES (?,?,?,?,?)").bind(cacheId,user.uid,item.url,item.title,expiry).run();item.id=cacheId;item.url=null;}}
+   if(external.length){await env.DB.prepare("CREATE TABLE IF NOT EXISTS external_listing_cache (id TEXT PRIMARY KEY,user_uid TEXT NOT NULL,url TEXT NOT NULL,title TEXT NOT NULL,expires_at TEXT NOT NULL)").run();const expiry=new Date(Date.now()+30*60*1000).toISOString();await env.DB.prepare("CREATE TABLE IF NOT EXISTS external_listing_verification (id TEXT PRIMARY KEY,url TEXT NOT NULL,title TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'unchecked',last_checked_at TEXT,next_check_at TEXT,check_count INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)").run();for(const item of external){const cacheId=crypto.randomUUID();await env.DB.prepare("INSERT INTO external_listing_cache (id,user_uid,url,title,expires_at) VALUES (?,?,?,?,?)").bind(cacheId,user.uid,item.url,item.title,expiry).run();const nowCheck=new Date().toISOString();await env.DB.prepare("INSERT INTO external_listing_verification (id,url,title,status,next_check_at,updated_at) VALUES (?,?,?,'unchecked',?,?)").bind(cacheId,item.url,item.title,nowCheck,nowCheck).run();item.id=cacheId;item.availability_status='source_page_live_unconfirmed';item.availability_label='Source found — availability not confirmed';item.last_checked_at=null;item.url=null;}}
     return json({criteria:parsed.criteria,properties:results,external_results:external,internal_count:results.length,external_count:external.length,minimum_internal_results:minimumInternalResults,external_fallback_used:externalFallbackUsed,external_search_status:externalSearchStatus,search_scope:externalFallbackUsed?"agentcopilot_first_then_external":"agentcopilot_database_only"},200,headers);
   }
 
