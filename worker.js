@@ -28,11 +28,14 @@ async function currentUser(request,env){
  }catch(e){console.error("Firebase token verification failed",e);return null;}
 }
 
-async function userRole(user){
+async function userRole(user,env){
+ const ownerEmail=String(env.OWNER_EMAIL||"").trim().toLowerCase();
+ if(ownerEmail&&String(user.email||"").trim().toLowerCase()===ownerEmail)return "owner";
  const url="https://firestore.googleapis.com/v1/projects/agentcopilot-98817/databases/(default)/documents/users/"+encodeURIComponent(user.uid);
- try{const r=await fetch(url,{headers:{Authorization:"Bearer "+user.token}});if(!r.ok)return "user";const d=await r.json();return String(d.fields?.role?.stringValue||"user").toLowerCase();}catch{return "user";}
+ try{const r=await fetch(url,{headers:{Authorization:"Bearer "+user.token}});if(!r.ok)return "user";const d=await r.json();const role=String(d.fields?.role?.stringValue||"user").toLowerCase();return role==="admin"?"admin":"user";}catch{return "user";}
 }
-async function isAdmin(user){const role=await userRole(user);return role==="admin"||role==="owner";}
+async function adminAccessTable(env){await env.DB.prepare("CREATE TABLE IF NOT EXISTS admin_access_overrides (user_uid TEXT PRIMARY KEY,status TEXT NOT NULL CHECK(status IN ('active','paused')),updated_at TEXT NOT NULL,updated_by TEXT NOT NULL)").run();}
+async function isAdmin(user,env){const role=await userRole(user,env);if(role==="owner")return true;if(role!=="admin")return false;await adminAccessTable(env);const row=await env.DB.prepare("SELECT status FROM admin_access_overrides WHERE user_uid=?").bind(user.uid).first();return !row||row.status!=="paused";}
 async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();}
 
 const INTELLIGENCE_VERSION="1.0.0";
@@ -300,7 +303,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
    }
    if(url.pathname==="/api/leads"&&request.method==="GET"){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
-    const admin=await isAdmin(user);const sql="SELECT l.*,p.title AS property_title,p.city,p.country,p.price,p.currency,p.seller_name FROM leads l LEFT JOIN properties p ON p.id=l.property_id "+(admin?"":"WHERE l.seller_uid=? OR l.buyer_uid=? ")+"ORDER BY l.created_at DESC LIMIT 100";
+    const admin=await isAdmin(user,env);const sql="SELECT l.*,p.title AS property_title,p.city,p.country,p.price,p.currency,p.seller_name FROM leads l LEFT JOIN properties p ON p.id=l.property_id "+(admin?"":"WHERE l.seller_uid=? OR l.buyer_uid=? ")+"ORDER BY l.created_at DESC LIMIT 100";
     const rows=admin?await env.DB.prepare(sql).all():await env.DB.prepare(sql).bind(user.uid,user.uid).all();return json({leads:(rows.results||[]).map(x=>({...x,can_update:admin||x.seller_uid===user.uid}))},200,headers);
    }
    if(url.pathname==="/api/leads"&&request.method==="POST"){
@@ -320,12 +323,28 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
     const id=url.pathname.split("/").pop(),b=await request.json(),status=clean(b.status,20).toLowerCase();if(!["new","contacted","viewing","closed","lost"].includes(status))return json({error:"Invalid lead stage."},400,headers);
     const lead=await env.DB.prepare("SELECT * FROM leads WHERE id=?").bind(id).first();if(!lead)return json({error:"Enquiry not found."},404,headers);
-    const admin=await isAdmin(user);if(lead.seller_uid!==user.uid&&!admin)return json({error:"Only the listing seller or an administrator can update this enquiry."},403,headers);
+    const admin=await isAdmin(user,env);if(lead.seller_uid!==user.uid&&!admin)return json({error:"Only the listing seller or an administrator can update this enquiry."},403,headers);
     await env.DB.prepare("UPDATE leads SET status=?,updated_at=? WHERE id=?").bind(status,new Date().toISOString(),id).run();
     await notify(env,lead.buyer_uid,"lead_update","Enquiry updated","The seller changed your enquiry status to "+status+".","./leads.html");return json({success:true,status},200,headers);
    }
+   if(url.pathname==="/api/account/access"&&request.method==="GET"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    const role=await userRole(user,env);let adminPaused=false;
+    if(role==="admin"){await adminAccessTable(env);const row=await env.DB.prepare("SELECT status FROM admin_access_overrides WHERE user_uid=?").bind(user.uid).first();adminPaused=!!row&&row.status==="paused";}
+    return json({role:adminPaused?"user":role,account_role:role,admin_paused:adminPaused},200,headers);
+   }
+   if(url.pathname==="/api/owner/admin-access"&&request.method==="PATCH"){
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);
+    if(await userRole(user,env)!=="owner")return json({error:"Owner authority required."},403,headers);
+    const b=await request.json().catch(()=>({})),uid=clean(b.uid,128),status=clean(b.status,20).toLowerCase();
+    if(!uid||uid===user.uid)return json({error:"Enter a valid administrator UID. The owner account cannot be changed here."},400,headers);
+    if(!["paused","active"].includes(status))return json({error:"Choose paused or active."},400,headers);
+    await adminAccessTable(env);
+    await env.DB.prepare("INSERT INTO admin_access_overrides (user_uid,status,updated_at,updated_by) VALUES (?,?,?,?) ON CONFLICT(user_uid) DO UPDATE SET status=excluded.status,updated_at=excluded.updated_at,updated_by=excluded.updated_by").bind(uid,status,new Date().toISOString(),user.uid).run();
+    return json({success:true,uid,status,message:status==="paused"?"Administrator access paused.":"Administrator access restored."},200,headers);
+   }
    if(url.pathname==="/api/admin/overview"&&request.method==="GET"){
-    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user))return json({error:"Administrator access required."},403,headers);
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user,env))return json({error:"Administrator access required."},403,headers);
     const [properties,sellers,leadCount,counts]=await Promise.all([
      env.DB.prepare("SELECT id,title,seller_name,seller_email,city,country,price,currency,purpose,status,created_at FROM properties ORDER BY created_at DESC LIMIT 100").all(),
      env.DB.prepare("SELECT seller_uid,seller_name,MAX(seller_email) AS seller_email,COUNT(*) AS listing_count FROM properties GROUP BY seller_uid ORDER BY MAX(created_at) DESC LIMIT 100").all(),
@@ -335,7 +354,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
     return json({properties:properties.results||[],sellers:sellers.results||[],lead_count:leadCount?.total||0,property_counts:counts.results||[]},200,headers);
    }
    if(url.pathname.startsWith("/api/admin/properties/")&&request.method==="PATCH"){
-    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user))return json({error:"Administrator access required."},403,headers);
+    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in."},401,headers);if(!await isAdmin(user,env))return json({error:"Administrator access required."},403,headers);
     const id=url.pathname.split("/").pop(),b=await request.json(),status=clean(b.status,20).toLowerCase();if(!["published","paused","removed"].includes(status))return json({error:"Invalid listing status."},400,headers);
     const property=await env.DB.prepare("SELECT seller_uid,title FROM properties WHERE id=?").bind(id).first();if(!property)return json({error:"Listing not found."},404,headers);
     await env.DB.prepare("UPDATE properties SET status=?,updated_at=? WHERE id=?").bind(status,new Date().toISOString(),id).run();
@@ -344,7 +363,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
 
   if(url.pathname.startsWith("/api/support")&&(request.method==="GET"||request.method==="POST"||request.method==="PATCH")){
     const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to contact support."},401,headers);
-    const admin=await isAdmin(user);const now=new Date().toISOString();
+    const admin=await isAdmin(user,env);const now=new Date().toISOString();
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS support_threads (id TEXT PRIMARY KEY,user_uid TEXT NOT NULL,user_email TEXT NOT NULL,user_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,last_message TEXT NOT NULL DEFAULT '')").run();
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS support_messages (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,sender_uid TEXT NOT NULL,sender_role TEXT NOT NULL,message TEXT NOT NULL,created_at TEXT NOT NULL)").run();
     if(url.pathname==="/api/support"&&request.method==="GET"){

@@ -1,0 +1,5 @@
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const base='/tmp/agentcopilot-owner';const worker=fs.readFileSync(base+'/worker.js','utf8');const client=fs.readFileSync(base+'/script.js','utf8');
+test('only the configured owner email receives owner authority',()=>{assert.match(worker,/env\.OWNER_EMAIL/);assert.match(worker,/role===\"admin\"\?\"admin\":\"user\"/);assert.doesNotMatch(worker,/return role===\"admin\"\|\|role===\"owner\"/);});
+test('admin authority is disabled by a server-side pause override',()=>{assert.match(worker,/admin_access_overrides/);assert.match(worker,/row\.status!==\"paused\"/);});
+test('only owner can change admin access and cannot target own UID',()=>{assert.match(worker,/userRole\(user,env\)!==\"owner\"/);assert.match(worker,/uid===user\.uid/);assert.match(worker,/\[\"paused\",\"active\"\]/);});
+test('frontend obtains effective role from the authenticated Worker API',()=>{assert.match(client,/api\(\"\/api\/account\/access\"\)/);});
