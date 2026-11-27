@@ -37,6 +37,17 @@ test('listing generation sanitizes prompt before Gemini and output before respon
   }
 });
 
+test('AI search parser uses its query argument and does not reference undefined prompt', () => {
+  for (const name of ['worker.js', 'payment-worker-staging.js']) {
+    const source = read(name);
+    const search = source.match(/async function aiSearch\(env,text\)\{[\s\S]*?\n\}/)?.[0];
+    assert.ok(search, name + ' aiSearch');
+    assert.ok(!search.includes('redactContactText(prompt)'), name + ' must not use undefined prompt');
+    assert.ok(search.includes('redactContactText(text)'), name + ' query is sanitized');
+    assert.ok(search.includes('parts:[{text:prompt}]'), name + ' uses assembled prompt');
+  }
+});
+
 test('Gemini listing generation requires a verified signed-in user', () => {
   for (const name of ['worker.js', 'payment-worker-staging.js']) {
     const source = read(name);
