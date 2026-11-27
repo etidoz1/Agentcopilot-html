@@ -44,3 +44,13 @@ test('all checked-in application JavaScript parses as modules', () => {
     assert.equal(result.status, 0, name + ': ' + result.stderr);
   }
 });
+
+
+test('package manifest and lockfile dependency declarations are consistent', () => {
+  const manifest = JSON.parse(read('package.json'));
+  const lock = JSON.parse(read('package-lock.json'));
+  assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
+  assert.equal(manifest.scripts.test, 'node --test tests/*.test.cjs');
+  const result = spawnSync(process.execPath, ['--check', path.join(root, 'server.js')], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+});
