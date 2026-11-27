@@ -35,6 +35,38 @@ async function userRole(user){
 async function isAdmin(user){const role=await userRole(user);return role==="admin"||role==="owner";}
 async function notify(env,userUid,type,title,message,link=""){await env.DB.prepare("INSERT INTO notifications (id,user_uid,type,title,message,link,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),userUid,type,title,message,link,new Date().toISOString()).run();await env.DB.prepare("DELETE FROM notifications WHERE user_uid=? AND id NOT IN (SELECT id FROM notifications WHERE user_uid=? ORDER BY created_at DESC,id DESC LIMIT 5)").bind(userUid,userUid).run();}
 
+const INTELLIGENCE_VERSION="1.0.0";
+function intelligenceFieldType(key){
+ const k=String(key||"").toLowerCase();
+ if(/(?:phone|mobile|whatsapp|email|telephone|contact)/.test(k))return "contact";
+ if(/(?:price|amount|budget|currency|fee|cost)/.test(k))return "price";
+ if(/(?:location|address|city|state|country|region|postcode|postal)/.test(k))return "location";
+ if(/(?:url|source|domain|link)/.test(k))return "source";
+ if(/(?:availability|verified|checked|status)/.test(k))return "availability";
+ if(/(?:image|photo|cover|gallery)/.test(k))return "media";
+ if(/(?:bedroom|bathroom|size|sqm|condition|feature|purpose|property|title|description|type)/.test(k))return "property_detail";
+ if(/(?:seller_name|buyer_name|name|uid|id)$/.test(k))return "identity";
+ return "other";
+}
+function redactContactText(value){
+ if(typeof value!=="string")return value;
+ return value.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,"[contact protected]")
+  .replace(/(?<!\w)(?:\+?\d{1,3}[\s().-]?)?(?:0\d{9,10}|[1-9]\d{9,11})(?!\w)/g,"[contact protected]");
+}
+function intelligenceProcessRecord(record){
+ if(!record||typeof record!=="object"||Array.isArray(record))return record;
+ const cleanRecord={},fieldTypes={};let protectedCount=0;
+ for(const [key,raw] of Object.entries(record)){
+  const type=intelligenceFieldType(key);fieldTypes[key]=type;
+  if(type==="contact"){if(raw)protectedCount++;continue;}
+  if(typeof raw==="string"&&type!=="source"&&type!=="media")cleanRecord[key]=redactContactText(raw);
+  else if(Array.isArray(raw))cleanRecord[key]=(type==="media"||type==="source")?raw:raw.map(v=>typeof v==="string"?redactContactText(v):v);
+  else cleanRecord[key]=raw;
+ }
+ cleanRecord.intelligence={engine:"AgentCoPilot Intelligence Engine",version:INTELLIGENCE_VERSION,processed:true,field_types:fieldTypes,protected_contact_fields:protectedCount};
+ return cleanRecord;
+}
+
 function filters(params){
  const c=["p.status = 'published'"],v=[];const add=(sql,val)=>{c.push(sql);v.push(val);};
  const purpose=clean(params.get("purpose"),10).toLowerCase();if(purpose==="sale"||purpose==="rent")add("p.purpose = ?",purpose);
@@ -50,7 +82,7 @@ function filters(params){
 }
 async function searchProperties(env,params,limit=24){
  const f=filters(params);const sql="SELECT p.*,(SELECT i.image_data FROM property_images i WHERE i.property_id=p.id ORDER BY i.sort_order LIMIT 1) AS cover_image,(SELECT COUNT(*) FROM property_images i WHERE i.property_id=p.id) AS image_count FROM properties p WHERE "+f.where+" ORDER BY p.created_at DESC LIMIT ?";
- const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return (r.results||[]).map(({seller_phone,seller_email,...publicRow})=>publicRow);
+ const r=await env.DB.prepare(sql).bind(...f.values,Math.min(Math.max(limit,1),40)).all();return (r.results||[]).map(({seller_phone,seller_email,...publicRow})=>intelligenceProcessRecord(publicRow));
 }
 async function aiSearch(env,text){
  const model=env.GEMINI_MODEL||DEFAULT_MODEL;
@@ -146,7 +178,7 @@ async function externalPropertySearch(env,query,criteria){
  const candidates=(Array.isArray(payload.results)?payload.results:[]).filter(x=>x&&typeof x.url==="string"&&/^https:\/\//i.test(x.url)&&typeof x.title==="string"&&isLikelyResidentialListing(x));
  const results=candidates.slice(0,8).map(x=>{
   const snippet=cleanExternalSnippet(x.content||"");let source="";try{source=new URL(x.url).hostname.replace(/^www\./,"");}catch{}
-  return {title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"};
+  return intelligenceProcessRecord({title:clean(x.title,220),url:x.url,snippet,source,image_urls:[],image_url:null,image_attribution:null,score:Number(x.score)||0,listing_status:"External residential result — verify availability and details with the original advertiser"});
  });
  await Promise.all(results.map(async item=>{const images=await listingPageImages(item.url);item.image_urls=images;item.image_url=images[0]||null;item.image_attribution=images.length?"Property-specific structured data from the original listing page":"unavailable";}));
  await tavilyListingImages(env,results);
@@ -195,7 +227,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
   if(url.pathname==="/api/properties"&&request.method==="GET"){const rows=await searchProperties(env,url.searchParams,Number(url.searchParams.get("limit")||24));return json({properties:rows},200,headers);}
   if(url.pathname==="/api/properties"&&request.method==="POST"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in again before publishing."},401,headers);const b=await request.json();
-   const name=clean(b.seller_name,100),phone=clean(b.seller_phone,40),purpose=clean(b.purpose,10).toLowerCase(),type=clean(b.property_type,80),title=clean(b.title,140),description=clean(b.description,3000),location=clean(b.location,240),city=clean(b.city,100),state=clean(b.state,100),country=clean(b.country,100),currency=clean(b.currency,3).toUpperCase(),price=money(b.price),photos=Array.isArray(b.photos)?b.photos.slice(0,5):[];
+   const name=redactContactText(clean(b.seller_name,100)),phone=clean(b.seller_phone,40),purpose=clean(b.purpose,10).toLowerCase(),type=clean(b.property_type,80),title=redactContactText(clean(b.title,140)),description=redactContactText(clean(b.description,3000)),location=redactContactText(clean(b.location,240)),city=redactContactText(clean(b.city,100)),state=redactContactText(clean(b.state,100)),country=redactContactText(clean(b.country,100)),currency=clean(b.currency,3).toUpperCase(),price=money(b.price),photos=Array.isArray(b.photos)?b.photos.slice(0,5):[];
    if(!name||!phone||!["sale","rent"].includes(purpose)||!type||!title||!description||!location||!city||!country||! /^[A-Z]{3}$/.test(currency)||!price)return json({error:"Complete all required property and seller details."},400,headers);
    if(b.authority_confirmed!==true||b.contact_consent!==true)return json({error:"Confirm your authority to list and consent to public contact details."},400,headers);
    if(!photos.length)return json({error:"Upload at least one real property photograph."},400,headers);
@@ -234,7 +266,7 @@ export default {async scheduled(controller,env,ctx){ctx.waitUntil(recheckExterna
    if(url.pathname.startsWith("/api/properties/")&&url.pathname.endsWith("/contact")&&request.method==="GET"){const user=await currentUser(request,env);if(!user)return json({error:"Sign in to access agent contacts."},401,headers);if(!await hasAgentAccess(env,user.uid))return json({error:"A paid 30-day Agent Access subscription is required.",subscription_required:true},402,headers);const id=decodeURIComponent(url.pathname.split("/").slice(-2)[0]||"");const row=await env.DB.prepare("SELECT id,seller_name,seller_phone,seller_email FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);return json({contact:row},200,headers);}
    if(url.pathname.startsWith("/api/properties/")&&request.method==="GET"){
    const id=url.pathname.split("/").pop(),row=await env.DB.prepare("SELECT * FROM properties WHERE id=? AND status='published'").bind(id).first();if(!row)return json({error:"Property not found."},404,headers);
-   const {seller_phone,seller_email,...publicProperty}=row;const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:publicProperty,images:imgs.results||[]},200,headers);
+   const {seller_phone,seller_email,...publicProperty}=row;const imgs=await env.DB.prepare("SELECT id,image_data,mime_type,sort_order FROM property_images WHERE property_id=? ORDER BY sort_order").bind(id).all();return json({property:intelligenceProcessRecord(publicProperty),images:imgs.results||[]},200,headers);
   }
   if(url.pathname==="/api/ai-search"&&request.method==="POST"){
    const user=await currentUser(request,env);if(!user)return json({error:"Please sign in to search properties."},401,headers);const b=await request.json(),q=clean(b.query,1200);if(q.length<8)return json({error:"Describe the property you want in more detail."},400,headers);

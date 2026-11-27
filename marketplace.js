@@ -6,6 +6,13 @@ const $=id=>document.getElementById(id);
 function notice(id,msg){const e=$(id);e.textContent=msg;e.style.display="block";}
 function hide(id){$(id).style.display="none";}
 function esc(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function readIntelligenceRecord(record){
+ if(!record||typeof record!=="object")return {};
+ const safe={...record};
+ ["seller_phone","seller_email","phone","email","mobile","whatsapp","telephone","contact_details"].forEach(k=>delete safe[k]);
+ if(!safe.intelligence||safe.intelligence.processed!==true)safe.intelligence={engine:"AgentCoPilot Intelligence Engine",processed:false,notice:"Legacy record — protected display fallback applied"};
+ return safe;
+}
 function moneyFormat(v,currency="NGN"){try{return new Intl.NumberFormat(undefined,{style:"currency",currency,maximumFractionDigits:0}).format(Number(v)||0);}catch{return currency+" "+(Number(v)||0).toLocaleString();}}
 async function getToken(){if(!auth.currentUser)throw new Error("Please sign in to continue.");return auth.currentUser.getIdToken();}
 $("buyer-tab").onclick=()=>{$("buyer-tab").classList.add("active");$("seller-tab").classList.remove("active");$("buyer-panel").hidden=false;$("seller-panel").hidden=true;};
@@ -14,13 +21,13 @@ onAuthStateChanged(auth,u=>{if(u){$("seller-name").value=u.displayName||"";loadS
 function render(rows,external=[]){
  const host=$("property-results");$("result-count").textContent=(rows.length+external.length)+" found ("+rows.length+" AgentCoPilot, "+external.length+" external)";
  if(!rows.length&&!external.length){host.innerHTML='<div class="empty">No matching listings were found in the sources searched. Try another location, budget or search description.</div>';return;}
- const internal=rows.map(p=>{
+ const internal=rows.map(p=>{p=readIntelligenceRecord(p);
   const photo=p.cover_image||"",features=JSON.parse(p.features||"[]"),reasons=p.match_reasons||[];
   let chips='<span class="chip">'+esc(p.purpose==="sale"?"For sale":"For rent")+'</span><span class="chip">'+esc(p.property_type)+'</span>';
   if(p.bedrooms)chips+='<span class="chip">'+p.bedrooms+' beds</span>';if(p.bathrooms)chips+='<span class="chip">'+p.bathrooms+' baths</span>';
   return '<article class="property-card">'+(photo?'<img src="'+photo+'" alt="Seller-supplied property photograph" loading="lazy">':'<div class="empty">No photo supplied</div>')+'<div class="property-body"><span class="chip">AgentCoPilot listing</span><div class="price">'+moneyFormat(p.price,p.currency||"NGN")+'</div><h3>'+esc(p.title)+'</h3><div class="muted">'+esc([p.location,p.city,p.state,p.country].filter(Boolean).join(", "))+'</div><div class="chips">'+chips+'</div><p>'+esc(p.description).slice(0,250)+'</p>'+(features.length?'<div class="chips">'+features.slice(0,5).map(x=>'<span class="chip">'+esc(x)+'</span>').join("")+'</div>':'')+(reasons.length?'<p class="muted">AI match: '+esc(reasons.join(" · "))+'</p>':'')+'<p class="muted">Listed by '+esc(p.seller_name)+'</p><div class="contact"><button type="button" class="primary" data-enquiry="'+esc(p.id)+'">Send enquiry</button>'+(auth.currentUser&&auth.currentUser.uid!==p.seller_uid?'<button type="button" class="primary" data-agent-contact="'+esc(p.id)+'">Unlock agent contact</button>':'<span class="muted">Your listing</span>')+'<button type="button" class="primary" data-agent-subscribe>Subscribe for 30 days</button>'+'</div></div></article>';
  }).join("");
- const outside=external.map(p=>{
+ const outside=external.map(p=>{p=readIntelligenceRecord(p);
   const photos=Array.isArray(p.image_urls)?p.image_urls.filter(u=>typeof u==="string"&&/^https:\/\//i.test(u)).slice(0,6):(p.image_url?[p.image_url]:[]);
   const gallery=photos.length?'<div class="external-gallery">'+photos.map((u,i)=>'<a href="'+esc(p.url)+'" target="_blank" rel="noopener"><img src="'+esc(u)+'" alt="Image declared by the original listing page, image '+(i+1)+'" loading="lazy"></a>').join("")+'</div><p class="muted">Source-page image metadata · confirm the photo on the original listing.</p>':'<div class="empty">No verified source-page image metadata was found. Open the original listing to view its photos.</div>';
   const budgetNote=p.budget_status==="over_budget"?'<p class="budget-warning">Over your stated budget · '+moneyFormat(p.listing_price,p.criteria_currency||"GBP")+' (source-stated price)</p>':p.budget_status==="within_budget"?'<p class="budget-ok">Source-stated price is within your budget.</p>':'<p class="muted">Price not verified against your budget — check the original listing.</p>';
